@@ -1,0 +1,32 @@
+appId: com.urads.app
+productName: Urads
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - "dist/**/*"
+
+extraResources:
+  - from: "resources/skills"
+    to: "skills"
+
+mac:
+  target: dmg
+  category: public.app-category.social-networking
+  icon: resources/icon.png
+
+win:
+  target: nsis
+  icon: resources/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+
+asar: true
+asarUnpack:
+  - "node_modules/playwright-core/**"
+
+npmRebuild: false

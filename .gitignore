@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.wrangler/
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+.env
+.env.local
+.dev.vars
+*.log
+release/
+
+release*/
+release-*/
+*.exe
+*.blockmap
+*.dmg

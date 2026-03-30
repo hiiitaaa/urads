@@ -1,0 +1,23 @@
+name = "urads-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "urads-db"
+database_id = "YOUR_D1_DATABASE_ID"
+migrations_dir = "migrations/core"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "urads-media"
+
+[vars]
+THREADS_APP_ID = "YOUR_THREADS_APP_ID"
+THREADS_REDIRECT_URI = "https://localhost:8890/callback"
+# THREADS_APP_SECRET と ENCRYPTION_KEY は .dev.vars（ローカル）/ wrangler secret（本番）で管理
+# 設定方法: npx wrangler secret put THREADS_APP_SECRET
+#            npx wrangler secret put ENCRYPTION_KEY
+
+[triggers]
+crons = ["* * * * *"]
