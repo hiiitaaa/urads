@@ -215,6 +215,70 @@ postRoutes.get('/insights', async (c) => {
   return c.json({ insights: results, total: results.length });
 });
 
+// GET /posts/insights/trends — 特定投稿のエンゲージメント推移
+postRoutes.get('/insights/trends', async (c) => {
+  const accountId = c.req.query('account_id');
+  const threadsId = c.req.query('threads_id');
+  if (!accountId || !threadsId) return c.json({ error: 'account_id and threads_id required' }, 400);
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT likes, replies, reposts, quotes, fetched_at,
+            (likes * 1 + replies * 5 + reposts * 4 + COALESCE(quotes, 0) * 3) AS score
+     FROM post_insights
+     WHERE account_id = ? AND threads_id = ?
+     ORDER BY fetched_at ASC`
+  ).bind(accountId, threadsId).all();
+
+  return c.json({ trends: results });
+});
+
+// GET /posts/insights/time-analysis — 投稿時間帯別の平均エンゲージメント
+postRoutes.get('/insights/time-analysis', async (c) => {
+  const accountId = c.req.query('account_id');
+  if (!accountId) return c.json({ error: 'account_id required' }, 400);
+
+  // postsテーブルのposted_atとinsightsの最新スコアを結合
+  const { results } = await c.env.DB.prepare(
+    `SELECT p.posted_at,
+            COALESCE(latest.score, 0) AS score,
+            COALESCE(latest.likes, 0) AS likes,
+            COALESCE(latest.replies, 0) AS replies
+     FROM posts p
+     LEFT JOIN (
+       SELECT pi.threads_id, pi.likes, pi.replies,
+              (pi.likes * 1 + pi.replies * 5 + pi.reposts * 4 + COALESCE(pi.quotes, 0) * 3) AS score
+       FROM post_insights pi
+       INNER JOIN (
+         SELECT threads_id, MAX(fetched_at) AS max_fetched
+         FROM post_insights WHERE account_id = ?
+         GROUP BY threads_id
+       ) m ON pi.threads_id = m.threads_id AND pi.fetched_at = m.max_fetched
+       WHERE pi.account_id = ?
+     ) latest ON p.threads_id = latest.threads_id
+     WHERE p.account_id = ? AND p.status = 'posted' AND p.posted_at IS NOT NULL`
+  ).bind(accountId, accountId, accountId).all();
+
+  // 時間帯別に集計
+  const hourly: Record<number, { total: number; count: number }> = {};
+  for (let h = 0; h < 24; h++) hourly[h] = { total: 0, count: 0 };
+
+  for (const row of results) {
+    const postedAt = row.posted_at as number;
+    if (!postedAt) continue;
+    const hour = new Date(postedAt).getHours();
+    hourly[hour].total += (row.score as number) || 0;
+    hourly[hour].count += 1;
+  }
+
+  const analysis = Object.entries(hourly).map(([hour, data]) => ({
+    hour: Number(hour),
+    avgScore: data.count > 0 ? Math.round(data.total / data.count) : 0,
+    postCount: data.count,
+  }));
+
+  return c.json({ analysis });
+});
+
 // GET /posts/insights/last-check — 最終チェック日時
 postRoutes.get('/insights/last-check', async (c) => {
   const accountId = c.req.query('account_id');
@@ -225,6 +289,85 @@ postRoutes.get('/insights/last-check', async (c) => {
   ).bind(accountId).first<{ last_check: number | null }>();
 
   return c.json({ last_check: result?.last_check || 0 });
+});
+
+// === テンプレート ===
+
+// GET /posts/templates — テンプレート一覧
+postRoutes.get('/templates', async (c) => {
+  const licenseId = c.get('licenseId' as never) as string || 'dev-license';
+  const { results } = await c.env.DB.prepare(
+    'SELECT * FROM post_templates WHERE license_id = ? ORDER BY usage_count DESC, updated_at DESC'
+  ).bind(licenseId).all();
+  return c.json({ templates: results, total: results.length });
+});
+
+// POST /posts/templates — テンプレート作成
+postRoutes.post('/templates', async (c) => {
+  const licenseId = c.get('licenseId' as never) as string || 'dev-license';
+  const body = await c.req.json();
+
+  if (!body.name?.trim() || !body.content?.trim()) {
+    return c.json({ error: 'name と content は必須です' }, 400);
+  }
+  if (body.content.length > 500) {
+    return c.json({ error: 'content は500文字以内にしてください' }, 400);
+  }
+
+  const id = crypto.randomUUID();
+  const now = Date.now();
+
+  // variables を content から自動抽出
+  const varMatches = body.content.match(/\{\{(.+?)\}\}/g);
+  const variables = varMatches
+    ? JSON.stringify([...new Set(varMatches.map((m: string) => m.slice(2, -2)))])
+    : null;
+
+  await c.env.DB.prepare(
+    `INSERT INTO post_templates (id, license_id, name, content, variables, category, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, licenseId, body.name.trim(), body.content.trim(), variables, body.category || null, now, now).run();
+
+  return c.json({ id, name: body.name.trim() }, 201);
+});
+
+// PUT /posts/templates/:id — テンプレート更新
+postRoutes.put('/templates/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json();
+
+  if (body.content && body.content.length > 500) {
+    return c.json({ error: 'content は500文字以内にしてください' }, 400);
+  }
+
+  const updates: string[] = ['updated_at = ?'];
+  const params: unknown[] = [Date.now()];
+
+  if (body.name) { updates.push('name = ?'); params.push(body.name.trim()); }
+  if (body.content) {
+    updates.push('content = ?'); params.push(body.content.trim());
+    // variables を再抽出
+    const varMatches = body.content.match(/\{\{(.+?)\}\}/g);
+    const variables = varMatches
+      ? JSON.stringify([...new Set(varMatches.map((m: string) => m.slice(2, -2)))])
+      : null;
+    updates.push('variables = ?'); params.push(variables);
+  }
+  if (body.category !== undefined) { updates.push('category = ?'); params.push(body.category || null); }
+
+  params.push(id);
+  await c.env.DB.prepare(
+    `UPDATE post_templates SET ${updates.join(', ')} WHERE id = ?`
+  ).bind(...params).run();
+
+  return c.json({ updated: true });
+});
+
+// DELETE /posts/templates/:id — テンプレート削除
+postRoutes.delete('/templates/:id', async (c) => {
+  const id = c.req.param('id');
+  await c.env.DB.prepare('DELETE FROM post_templates WHERE id = ?').bind(id).run();
+  return c.json({ deleted: true });
 });
 
 // GET /posts/:id

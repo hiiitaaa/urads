@@ -66,10 +66,10 @@ export async function generateWithClaude(
   encryptionKey: string,
   options: GenerateOptions,
 ): Promise<GenerateResult> {
-  // 設定取得
+  // 設定取得（カスタム指示含む）
   const settings = await db.prepare(
-    'SELECT claude_api_key, key_source FROM ai_settings WHERE license_id = ?'
-  ).bind(licenseId).first<{ claude_api_key: string | null; key_source: string }>();
+    'SELECT claude_api_key, key_source, custom_instructions FROM ai_settings WHERE license_id = ?'
+  ).bind(licenseId).first<{ claude_api_key: string | null; key_source: string; custom_instructions: string | null }>();
 
   if (!settings?.claude_api_key) {
     throw new Error('Claude APIキーが設定されていません。設定画面から入力してください。');
@@ -102,7 +102,9 @@ export async function generateWithClaude(
       body: JSON.stringify({
         model,
         max_tokens: Math.min(options.maxTokens, 500),
-        system: SYSTEM_PROMPT,
+        system: settings.custom_instructions
+          ? `${SYSTEM_PROMPT}\n\n## ユーザーのカスタム指示\n${settings.custom_instructions}`
+          : SYSTEM_PROMPT,
         messages: [{ role: 'user', content: options.prompt }],
       }),
       signal: controller.signal,

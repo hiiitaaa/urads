@@ -13,7 +13,8 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.84",
     "@electron-toolkit/utils": "^3.0.0",
     "electron-log": "^5.4.3",
-    "playwright-core": "^1.58.2"
+    "playwright-core": "^1.58.2",
+    "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@tanstack/react-query": "^5.0.0",

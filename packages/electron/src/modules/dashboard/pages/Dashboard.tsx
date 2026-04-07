@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { API_BASE } from '../../../config';
+import { EngagementTrendChart } from '../components/EngagementTrendChart';
+import { BestTimeChart } from '../components/BestTimeChart';
+import { AIContextButton } from '../../ai/components/AIContextButton';
 
 interface Insight {
   threads_id: string;
@@ -40,6 +43,8 @@ export function Dashboard(): React.JSX.Element {
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [sortAsc, setSortAsc] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [tab, setTab] = useState<'table' | 'time-analysis'>('table');
+  const [expandedPost, setExpandedPost] = useState<string | null>(null);
 
   const fetchInsights = async (accountId: string) => {
     try {
@@ -166,48 +171,101 @@ export function Dashboard(): React.JSX.Element {
         <Card label="最終取得" value={lastFetched ? relativeTime(lastFetched) : '未取得'} />
       </div>
 
-      {/* 投稿テーブル */}
-      {insights.length === 0 ? (
-        <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>
-          データがありません。「Insightsを更新」ボタンでデータを取得してください。
+      {/* タブ */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid #e0e0e0' }}>
+        {([['table', 'テーブル'], ['time-analysis', '投稿時間分析']] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{
+              padding: '8px 16px', fontSize: 13, cursor: 'pointer', border: 'none',
+              borderBottom: tab === key ? '2px solid #9b59b6' : '2px solid transparent',
+              background: 'transparent', color: tab === key ? '#9b59b6' : '#666', fontWeight: tab === key ? 600 : 400,
+            }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* タブコンテンツ */}
+      {tab === 'time-analysis' && account && (
+        <div>
+          <BestTimeChart accountId={account.id} />
+          <div style={{ marginTop: 12 }}>
+            <AIContextButton
+              label="投稿時間を分析"
+              contextType="posting_time"
+              contextData={{
+                insights: insights.slice(0, 10).map((i) => ({
+                  content: i.content_preview?.slice(0, 30),
+                  score: i.score, likes: i.likes, replies: i.replies,
+                })),
+                totalPosts,
+                avgScore,
+              }}
+            />
+          </div>
         </div>
-      ) : (
+      )}
+
+      {tab === 'table' && (
         <>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #e0e0e0' }}>
-                <th style={thStyle}>投稿内容</th>
-                <SortTh label="いいね" sortKey="likes" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
-                <SortTh label="リプライ" sortKey="replies" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
-                <SortTh label="リポスト" sortKey="reposts" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
-                <SortTh label="引用" sortKey="quotes" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
-                <SortTh label="スコア" sortKey="score" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
-                <SortTh label="取得日時" sortKey="fetched_at" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
-              </tr>
-            </thead>
-            <tbody>
-              {displayed.map((row, idx) => (
-                <tr key={row.threads_id} style={{ background: idx % 2 === 0 ? '#fff' : '#f9f9f9', borderBottom: '1px solid #eee' }}>
-                  <td style={tdStyle}>{row.content_preview || '—'}</td>
-                  <td style={tdNumStyle}>{row.likes}</td>
-                  <td style={tdNumStyle}>{row.replies}</td>
-                  <td style={tdNumStyle}>{row.reposts}</td>
-                  <td style={tdNumStyle}>{row.quotes}</td>
-                  <td style={{ ...tdNumStyle, fontWeight: 600 }}>{row.score}</td>
-                  <td style={tdStyle}>{relativeTime(row.fetched_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!showAll && sorted.length > 20 && (
-            <div style={{ textAlign: 'center', marginTop: 12 }}>
-              <button
-                onClick={() => setShowAll(true)}
-                style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid #ccc', background: '#fff', cursor: 'pointer', fontSize: 13 }}
-              >
-                すべて表示（{sorted.length}件）
-              </button>
+          {insights.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>
+              データがありません。「Insightsを更新」ボタンでデータを取得してください。
             </div>
+          ) : (
+            <>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e0e0e0' }}>
+                    <th style={thStyle}>投稿内容</th>
+                    <SortTh label="いいね" sortKey="likes" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
+                    <SortTh label="リプライ" sortKey="replies" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
+                    <SortTh label="リポスト" sortKey="reposts" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
+                    <SortTh label="引用" sortKey="quotes" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
+                    <SortTh label="スコア" sortKey="score" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
+                    <SortTh label="取得日時" sortKey="fetched_at" currentKey={sortKey} asc={sortAsc} onClick={handleSort} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayed.map((row, idx) => (
+                    <React.Fragment key={row.threads_id}>
+                      <tr
+                        onClick={() => setExpandedPost(expandedPost === row.threads_id ? null : row.threads_id)}
+                        style={{ background: idx % 2 === 0 ? '#fff' : '#f9f9f9', borderBottom: '1px solid #eee', cursor: 'pointer' }}>
+                        <td style={tdStyle}>{row.content_preview || '—'}</td>
+                        <td style={tdNumStyle}>{row.likes}</td>
+                        <td style={tdNumStyle}>{row.replies}</td>
+                        <td style={tdNumStyle}>{row.reposts}</td>
+                        <td style={tdNumStyle}>{row.quotes}</td>
+                        <td style={{ ...tdNumStyle, fontWeight: 600 }}>{row.score}</td>
+                        <td style={tdStyle}>{relativeTime(row.fetched_at)}</td>
+                      </tr>
+                      {expandedPost === row.threads_id && account && (
+                        <tr>
+                          <td colSpan={7} style={{ padding: 16, background: '#fafafa' }}>
+                            <EngagementTrendChart
+                              accountId={account.id}
+                              threadsId={row.threads_id}
+                              contentPreview={row.content_preview}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+              {!showAll && sorted.length > 20 && (
+                <div style={{ textAlign: 'center', marginTop: 12 }}>
+                  <button
+                    onClick={() => setShowAll(true)}
+                    style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid #ccc', background: '#fff', cursor: 'pointer', fontSize: 13 }}
+                  >
+                    すべて表示（{sorted.length}件）
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}

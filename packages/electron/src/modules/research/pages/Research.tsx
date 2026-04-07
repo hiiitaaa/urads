@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from '../../../config';
+import { HashtagAnalysis } from '../components/HashtagAnalysis';
+import { BuzzWordRanking } from '../components/BuzzWordRanking';
+import { AIContextButton } from '../../ai/components/AIContextButton';
 
 interface Benchmark {
   id: string;
@@ -29,7 +32,7 @@ interface Budget {
   keyword_search: { used: number; limit: number; remaining: number };
 }
 
-type Tab = 'benchmarks' | 'search' | 'trending' | 'settings';
+type Tab = 'benchmarks' | 'search' | 'trending' | 'analysis' | 'settings';
 
 declare global {
   interface Window {
@@ -183,7 +186,7 @@ export function Research(): React.JSX.Element {
 
       {/* タブ */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
-        {([['benchmarks', 'ベンチマーク'], ['search', 'キーワード検索'], ['trending', 'トレンド'], ['settings', '設定']] as [Tab, string][]).map(([id, label]) => (
+        {([['benchmarks', 'ベンチマーク'], ['search', 'キーワード検索'], ['trending', 'トレンド'], ['analysis', '分析'], ['settings', '設定']] as [Tab, string][]).map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{ padding: '8px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
               background: tab === id ? '#1a1a2e' : '#eee', color: tab === id ? '#fff' : '#333', fontSize: 14 }}>
@@ -304,6 +307,11 @@ export function Research(): React.JSX.Element {
 
       {/* トレンドタブ */}
       {tab === 'trending' && <TrendingTab />}
+
+      {/* 分析タブ */}
+      {tab === 'analysis' && (
+        <AnalysisTab benchmarks={benchmarks} />
+      )}
 
       {/* 設定タブ */}
       {tab === 'settings' && <ResearchSettings />}
@@ -483,6 +491,49 @@ function TrendingTab(): React.JSX.Element {
             })}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function AnalysisTab({ benchmarks }: { benchmarks: Benchmark[] }): React.JSX.Element {
+  const [selectedBenchmark, setSelectedBenchmark] = useState<string>('');
+
+  useEffect(() => {
+    if (benchmarks.length > 0 && !selectedBenchmark) {
+      setSelectedBenchmark(benchmarks[0].id);
+    }
+  }, [benchmarks, selectedBenchmark]);
+
+  if (benchmarks.length === 0) {
+    return <p style={{ color: '#999' }}>ベンチマークを追加してからスクレイプすると、分析データが表示されます。</p>;
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 13, color: '#666', marginRight: 8 }}>分析対象:</label>
+        <select value={selectedBenchmark} onChange={(e) => setSelectedBenchmark(e.target.value)}
+          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 14 }}>
+          {benchmarks.map((b) => (
+            <option key={b.id} value={b.id}>@{b.threads_handle}{b.display_name ? ` (${b.display_name})` : ''}</option>
+          ))}
+        </select>
+      </div>
+
+      {selectedBenchmark && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          <HashtagAnalysis benchmarkId={selectedBenchmark} />
+          <BuzzWordRanking benchmarkId={selectedBenchmark} />
+          <div>
+            <AIContextButton
+              label="コンテンツ戦略を提案"
+              contextType="content_strategy"
+              contextData={{ benchmarkId: selectedBenchmark }}
+              prompt="このベンチマークアカウントのバズ傾向から、効果的なコンテンツ戦略を提案してください。"
+            />
+          </div>
+        </div>
       )}
     </div>
   );

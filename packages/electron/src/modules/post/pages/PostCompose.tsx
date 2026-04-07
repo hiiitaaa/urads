@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 
 import { API_BASE } from '../../../config';
 import { AIGenerateModal } from '../../ai/components/AIGenerateModal';
+import { TemplatePickerModal } from '../components/TemplatePickerModal';
+import { AIContextButton } from '../../ai/components/AIContextButton';
 
 interface Account {
   id: string;
@@ -19,6 +21,7 @@ export function PostCompose(): React.JSX.Element {
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
   const [showAI, setShowAI] = useState(false);
+  const [showTemplate, setShowTemplate] = useState(false);
   const [mediaFiles, setMediaFiles] = useState<Array<{ path: string; name: string; url?: string; key?: string; type?: string; uploading?: boolean }>>([]);
   const maxLength = 500;
 
@@ -134,6 +137,24 @@ export function PostCompose(): React.JSX.Element {
               style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #9b59b6', background: 'transparent', color: '#9b59b6', fontSize: 13, cursor: 'pointer' }}>
               AI生成
             </button>
+            <button onClick={() => setShowTemplate(true)}
+              style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #27ae60', background: 'transparent', color: '#27ae60', fontSize: 13, cursor: 'pointer' }}>
+              テンプレート
+            </button>
+            {content.trim().length >= 10 && (
+              <AIContextButton
+                label="ハッシュタグ提案"
+                contextType="hashtag_suggest"
+                contextData={{ content }}
+                onResult={(text) => {
+                  // ハッシュタグを抽出してコンテンツに追加
+                  const tags = text.match(/#[^\s#]+/g);
+                  if (tags && tags.length > 0) {
+                    setContent((prev) => prev + '\n\n' + tags.join(' '));
+                  }
+                }}
+              />
+            )}
             <button onClick={async () => {
               const result = await (window.urads as Record<string, Function>).mediaPickFiles() as { files: string[] };
               if (result.files.length === 0) return;
@@ -376,6 +397,14 @@ export function PostCompose(): React.JSX.Element {
         <AIGenerateModal
           onInsert={(text) => setContent(text)}
           onClose={() => setShowAI(false)}
+        />
+      )}
+
+      {/* テンプレートモーダル */}
+      {showTemplate && (
+        <TemplatePickerModal
+          onInsert={(text) => setContent(text)}
+          onClose={() => setShowTemplate(false)}
         />
       )}
     </div>

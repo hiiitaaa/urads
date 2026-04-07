@@ -24,13 +24,19 @@ aiRoutes.post('/generate', async (c) => {
     return c.json({ error: 'プロンプトは2000文字以内にしてください' }, 400);
   }
 
+  // コンテキスト付きプロンプト構築
+  let finalPrompt = body.prompt;
+  if (body.context_type && body.context_data) {
+    finalPrompt = buildContextPrompt(body.context_type, body.context_data, body.prompt);
+  }
+
   const settings = await c.env.DB.prepare(
     'SELECT claude_model, max_tokens FROM ai_settings WHERE license_id = ?'
   ).bind(licenseId).first<{ claude_model: string; max_tokens: number }>();
 
   try {
     const result = await generateWithClaude(c.env.DB, licenseId, c.env.ENCRYPTION_KEY, {
-      prompt: body.prompt,
+      prompt: finalPrompt,
       model: body.model || settings?.claude_model || 'claude-haiku-4-5-20251001',
       maxTokens: body.max_tokens || settings?.max_tokens || 300,
     });
@@ -196,3 +202,48 @@ aiRoutes.put('/settings', async (c) => {
 
 // Export cleanup function for cron
 export { cleanupOldGenerations };
+
+/**
+ * コンテキストタイプに応じたプロンプト構築
+ */
+function buildContextPrompt(contextType: string, contextData: unknown, userPrompt: string): string {
+  const data = contextData as Record<string, unknown>;
+
+  switch (contextType) {
+    case 'posting_time':
+      return `以下の投稿時間帯別エンゲージメントデータを分析し、最適な投稿時間帯と理由を具体的にアドバイスしてください。
+
+データ:
+${JSON.stringify(data, null, 2)}
+
+${userPrompt || '投稿時間の最適化について提案してください。'}`;
+
+    case 'hashtag_suggest':
+      return `以下の投稿内容に最適なハッシュタグを5〜10個提案してください。Threadsで使える形式（#タグ）で出力してください。
+
+投稿内容:
+${data.content || userPrompt}
+
+${data.hashtag_data ? `参考: 同ジャンルで効果的なハッシュタグデータ:\n${JSON.stringify(data.hashtag_data)}` : ''}`;
+
+    case 'content_strategy':
+      return `以下のバズ投稿分析データをもとに、今後のコンテンツ戦略を提案してください。
+
+バズキーワード: ${JSON.stringify(data.keywords || [])}
+ハッシュタグ傾向: ${JSON.stringify(data.hashtags || [])}
+投稿パターン: ${JSON.stringify(data.patterns || {})}
+
+${userPrompt || '具体的なコンテンツ戦略を3つ提案してください。'}`;
+
+    case 'template_variation':
+      return `以下のテンプレートをベースに、トーンや表現を変えた3つのバリエーションを作成してください。各バリエーションは500文字以内で、そのまま投稿できる形式にしてください。
+
+元のテンプレート:
+${data.template || userPrompt}
+
+バリエーションを番号付きで出力してください。`;
+
+    default:
+      return userPrompt;
+  }
+}

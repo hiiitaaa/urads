@@ -3,6 +3,7 @@ import type { Env } from '../../env.js';
 import { getResearchBudget, cleanupOldCalls, estimateScrapeBudget, canCallResearchApi } from './limits.js';
 import { scrapeProfile, scrapePosts, searchKeyword } from './scraper.js';
 import { redetectBuzz, analyzePostingPattern } from './analyzer.js';
+import { analyzeHashtags, analyzeBuzzKeywords } from './text-analyzer.js';
 
 export const researchRoutes = new Hono<{ Bindings: Env }>();
 
@@ -321,6 +322,30 @@ researchRoutes.get('/benchmarks/:id/analysis', async (c) => {
 
   const analysis = await analyzePostingPattern(c.env.DB, benchmarkId);
   return c.json(analysis);
+});
+
+// GET /research/benchmarks/:id/hashtags — ハッシュタグ分析
+researchRoutes.get('/benchmarks/:id/hashtags', async (c) => {
+  const licenseId = getLicenseId(c);
+  const benchmarkId = c.req.param('id');
+
+  const ownership = await assertBenchmarkOwnership(c.env.DB, benchmarkId, licenseId);
+  if (!ownership.ok) return c.json({ error: 'アクセス権がありません' }, 403);
+
+  const hashtags = await analyzeHashtags(c.env.DB, benchmarkId);
+  return c.json({ hashtags });
+});
+
+// GET /research/benchmarks/:id/keywords — バズワード分析
+researchRoutes.get('/benchmarks/:id/keywords', async (c) => {
+  const licenseId = getLicenseId(c);
+  const benchmarkId = c.req.param('id');
+
+  const ownership = await assertBenchmarkOwnership(c.env.DB, benchmarkId, licenseId);
+  if (!ownership.ok) return c.json({ error: 'アクセス権がありません' }, 403);
+
+  const keywords = await analyzeBuzzKeywords(c.env.DB, benchmarkId);
+  return c.json({ keywords });
 });
 
 // GET /research/search — キーワード検索（Fix 3: バジェットチェック追加）

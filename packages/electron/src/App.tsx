@@ -9,14 +9,16 @@ import { Research } from './modules/research/pages/Research';
 import { ChatPanel } from './modules/chat/ChatPanel';
 import { LogViewer } from './modules/chat/LogViewer';
 import { Dashboard } from './modules/dashboard/pages/Dashboard';
+import { BatchSchedule } from './modules/post/pages/BatchSchedule';
 import { SetupWizard } from './modules/setup/SetupWizard';
 import { getApiBase, initApiBase } from './config';
 
-type Page = 'dashboard' | 'compose' | 'schedules' | 'history' | 'replies' | 'reply-logs' | 'research' | 'chat-logs' | 'settings';
+type Page = 'dashboard' | 'compose' | 'batch-schedule' | 'schedules' | 'history' | 'replies' | 'reply-logs' | 'research' | 'chat-logs' | 'settings';
 
 const PAGES: { id: Page; label: string }[] = [
   { id: 'dashboard', label: 'ダッシュボード' },
   { id: 'compose', label: '新規投稿' },
+  { id: 'batch-schedule', label: '一括予約' },
   { id: 'schedules', label: '予約一覧' },
   { id: 'history', label: '投稿履歴' },
   { id: 'replies', label: 'リプライルール' },
@@ -66,7 +68,7 @@ export function App(): React.JSX.Element {
   };
 
   const handleChatNavigate = (pageId: string) => {
-    const validPages: Page[] = ['dashboard', 'compose', 'schedules', 'history', 'replies', 'reply-logs', 'research', 'chat-logs', 'settings'];
+    const validPages: Page[] = ['dashboard', 'compose', 'batch-schedule', 'schedules', 'history', 'replies', 'reply-logs', 'research', 'chat-logs', 'settings'];
     if (validPages.includes(pageId as Page)) {
       setPage(pageId as Page);
     }
@@ -76,6 +78,7 @@ export function App(): React.JSX.Element {
     switch (page) {
       case 'dashboard': return <Dashboard />;
       case 'compose': return <PostCompose />;
+      case 'batch-schedule': return <BatchSchedule />;
       case 'schedules': return <Schedules />;
       case 'history': return <History onNavigateToRules={navigateToRules} />;
       case 'replies': return <ReplyRules preselectedPostId={preselectedPostId} onClearPreselect={() => setPreselectedPostId(null)} />;
