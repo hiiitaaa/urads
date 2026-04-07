@@ -2,7 +2,8 @@
  * アプリケーション設定
  * ウィザードで設定されたWorkers URLをmain processから取得
  */
-const config = { apiBase: 'http://localhost:8787' };
+const PRODUCTION_API = 'https://urads-api.nohara-ce.workers.dev';
+const config = { apiBase: PRODUCTION_API };
 
 export function getApiBase(): string {
   return config.apiBase;

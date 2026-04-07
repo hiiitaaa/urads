@@ -5,7 +5,7 @@ compatibility_date = "2024-12-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "urads-db"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "6cba5076-dfb4-4dbc-b46b-caaeba7c723a"
 migrations_dir = "migrations/core"
 
 [[r2_buckets]]
