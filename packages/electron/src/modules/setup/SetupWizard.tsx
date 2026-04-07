@@ -109,7 +109,19 @@ export function SetupWizard({ onComplete }: Props): React.JSX.Element {
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+              <button
+                onClick={async () => {
+                  await (window as any).urads.configSetApiBase('http://localhost:8787');
+                  setStep(2);
+                }}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd',
+                  background: '#fff', cursor: 'pointer', fontSize: 13, color: '#999',
+                }}
+              >
+                ローカルモードで開始
+              </button>
               <button
                 onClick={() => setStep(2)}
                 disabled={!testResult?.ok}
@@ -123,6 +135,11 @@ export function SetupWizard({ onComplete }: Props): React.JSX.Element {
                 次へ
               </button>
             </div>
+
+            <p style={{ fontSize: 11, color: '#bbb', marginTop: 12 }}>
+              ※ ローカルモードは Workers を localhost:8787 で起動している場合に使えます。
+              Workers 未デプロイでもアプリの動作確認が可能です。
+            </p>
           </>
         )}
 
