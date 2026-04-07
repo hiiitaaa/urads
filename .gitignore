@@ -8,3 +8,8 @@ Thumbs.db
 .env.local
 .dev.vars
 *.log
+
+# Build artifacts
+release*/
+packages/electron/release*/
+*.exe
