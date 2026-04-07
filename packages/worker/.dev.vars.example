@@ -1,0 +1,6 @@
+# Threads API App Secret（Meta Developer Portalから取得）
+THREADS_APP_SECRET=
+
+# 暗号化キー（以下コマンドで生成）
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+ENCRYPTION_KEY=

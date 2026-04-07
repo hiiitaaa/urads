@@ -1,0 +1,24 @@
+{
+  "name": "urads",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @urads/electron dev",
+    "dev:worker": "docker compose up",
+    "dev:all": "concurrently \"pnpm dev:worker\" \"sleep 5 && pnpm dev\"",
+    "build": "pnpm --filter @urads/shared build && pnpm --filter @urads/electron build",
+    "db:migrate": "pnpm --filter @urads/worker db:migrate",
+    "setup": "bash scripts/setup.sh",
+    "setup:win": "scripts\\setup.bat"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "esbuild", "sharp", "workerd"]
+  }
+}

@@ -1,0 +1,17 @@
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: packages/worker/Dockerfile
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./packages/worker/src:/app/packages/worker/src
+      - ./packages/worker/migrations:/app/packages/worker/migrations
+      - ./packages/worker/.dev.vars:/app/packages/worker/.dev.vars
+      - ./packages/shared:/app/packages/shared
+      - worker-data:/app/packages/worker/.wrangler
+    # ENCRYPTION_KEY は .dev.vars から読み込まれる
+
+volumes:
+  worker-data:
