@@ -92,13 +92,7 @@ export function Settings({ onAssistantNameChange }: SettingsProps): React.JSX.El
     <div>
       <h1 style={{ fontSize: 24, marginBottom: 20 }}>設定</h1>
 
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>サーバー接続</h2>
-        <div style={{ padding: 16, borderRadius: 8, background: '#f8f9fa' }}>
-          <p>Workers API: <strong>{health}</strong></p>
-          <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>エンドポイント: {API_BASE}</p>
-        </div>
-      </section>
+      <ServerSettings health={health} />
 
       <section style={{ marginBottom: 32 }}>
         <h2 style={{ fontSize: 18, marginBottom: 12 }}>アカウント管理</h2>
@@ -276,6 +270,91 @@ function AssistantSettings({ onNameChange }: { onNameChange?: (name: string) => 
           />
           アプリ起動時にチャットパネルを自動で開く
         </label>
+      </div>
+    </section>
+  );
+}
+
+function ServerSettings({ health }: { health: string }): React.JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [newUrl, setNewUrl] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const handleTest = async () => {
+    const normalized = newUrl.replace(/\/+$/, '');
+    if (!normalized.startsWith('https://') && !normalized.startsWith('http://localhost') && !normalized.startsWith('http://127.0.0.1')) {
+      setTestResult({ ok: false, error: 'URLは https:// で始まる必要があります（localhost は http 可）' });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await (window as any).urads.configTestConnection(normalized);
+      setTestResult(result);
+    } catch {
+      setTestResult({ ok: false, error: '接続テストに失敗しました' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    const normalized = newUrl.replace(/\/+$/, '');
+    await (window as any).urads.configSetApiBase(normalized);
+    setSaved(true);
+    setEditing(false);
+    setTimeout(() => setSaved(false), 3000);
+    // リロードを促す
+  };
+
+  return (
+    <section style={{ marginBottom: 32 }}>
+      <h2 style={{ fontSize: 18, marginBottom: 12 }}>サーバー接続</h2>
+      <div style={{ padding: 16, borderRadius: 8, background: '#f8f9fa' }}>
+        <p>Workers API: <strong>{health}</strong></p>
+        <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>エンドポイント: {API_BASE}</p>
+
+        {!editing ? (
+          <div style={{ marginTop: 12 }}>
+            <button onClick={() => { setEditing(true); setNewUrl(String(API_BASE)); setTestResult(null); }}
+              style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid #ddd', background: 'transparent', color: '#666', fontSize: 12, cursor: 'pointer' }}>
+              サーバーを変更
+            </button>
+            {saved && <span style={{ color: '#27ae60', marginLeft: 8, fontSize: 13 }}>保存しました（再起動後に反映）</span>}
+          </div>
+        ) : (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fff', border: '1px solid #e0e0e0' }}>
+            <input
+              type="url" value={newUrl}
+              onChange={(e) => { setNewUrl(e.target.value); setTestResult(null); }}
+              placeholder="https://urads-api.xxxxx.workers.dev"
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={handleTest} disabled={testing || !newUrl.trim()}
+                style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #ddd', background: '#fff', fontSize: 12, cursor: 'pointer' }}>
+                {testing ? 'テスト中...' : '接続テスト'}
+              </button>
+              {testResult?.ok && (
+                <button onClick={handleSave}
+                  style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#1a1a2e', color: '#fff', fontSize: 12, cursor: 'pointer' }}>
+                  保存
+                </button>
+              )}
+              <button onClick={() => setEditing(false)}
+                style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #ddd', background: 'transparent', color: '#999', fontSize: 12, cursor: 'pointer' }}>
+                キャンセル
+              </button>
+            </div>
+            {testResult && (
+              <p style={{ marginTop: 8, fontSize: 12, color: testResult.ok ? '#27ae60' : '#e74c3c' }}>
+                {testResult.ok ? '接続OK' : testResult.error}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );
