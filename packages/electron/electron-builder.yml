@@ -13,7 +13,9 @@ extraResources:
     to: "skills"
 
 mac:
-  target: dmg
+  target:
+    - target: dmg
+      arch: universal
   category: public.app-category.social-networking
   icon: resources/icon.png
 
