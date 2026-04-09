@@ -13,7 +13,7 @@ binding = "MEDIA"
 bucket_name = "urads-media"
 
 [vars]
-THREADS_APP_ID = "YOUR_THREADS_APP_ID"
+THREADS_APP_ID = "941586355006583"
 THREADS_REDIRECT_URI = "https://localhost:8890/callback"
 # THREADS_APP_SECRET と ENCRYPTION_KEY は .dev.vars（ローカル）/ wrangler secret（本番）で管理
 # 設定方法: npx wrangler secret put THREADS_APP_SECRET
