@@ -1,9 +1,10 @@
 /**
  * アプリケーション設定
  * ウィザードで設定されたWorkers URLをmain processから取得
+ * ※ Rendererバンドルに個人URLを埋め込まないため、初期値は空文字。
+ *   実際のURLは initApiBase() でMain processから取得する。
  */
-const PRODUCTION_API = 'https://urads-api.nohara-ce.workers.dev';
-const config = { apiBase: PRODUCTION_API };
+const config = { apiBase: '' };
 
 export function getApiBase(): string {
   return config.apiBase;

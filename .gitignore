@@ -13,3 +13,4 @@ Thumbs.db
 release*/
 packages/electron/release*/
 *.exe
+*.asar

@@ -17,7 +17,7 @@ const chatQueue = new MessageQueue(processMessage);
 import { scrapeTrending, scrapeBenchmark, scrapeSearch, scrapeOwnInsights, openLoginBrowser } from './modules/scraper/feed-scraper';
 import { execFile, type ChildProcess } from 'child_process';
 import { getApiBase } from './modules/config/api-base';
-import { setWorkersUrl, isSetupCompleted, completeSetup } from './modules/config/app-config-store';
+import { setWorkersUrl, setCustomUrl, setSharedUrl, isSetupCompleted, isSharedServer, completeSetup, migrateConfig } from './modules/config/app-config-store';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -263,6 +263,7 @@ ipcMain.handle('insights:refresh', async (_event, handle: string, accountId: str
 
 // 起動時自動Insightsリフレッシュ（6時間以上経過していたら）
 async function autoRefreshInsights(): Promise<void> {
+  if (!isSetupCompleted() || !getApiBase()) return;
   try {
     const accRes = await net.fetch(`${getApiBase()}/accounts`);
     const accData = await accRes.json() as { accounts: Array<{ id: string; threads_handle: string }> };
@@ -361,9 +362,17 @@ ipcMain.handle('chat:clearHistory', async () => {
 ipcMain.handle('config:getApiBase', () => getApiBase());
 
 ipcMain.handle('config:setApiBase', async (_event, url: string) => {
-  setWorkersUrl(url);
+  validateUrl(url);
+  setCustomUrl(url);
   return { ok: true };
 });
+
+ipcMain.handle('config:setSharedServer', () => {
+  setSharedUrl();
+  return { ok: true };
+});
+
+ipcMain.handle('config:isSharedServer', () => isSharedServer());
 
 ipcMain.handle('config:isSetupCompleted', () => isSetupCompleted());
 
@@ -372,8 +381,21 @@ ipcMain.handle('config:completeSetup', () => {
   return { ok: true };
 });
 
+/** URL安全性チェック（IPC経由の入力をバリデーション） */
+function validateUrl(url: string): void {
+  const parsed = new URL(url);
+  if (parsed.username || parsed.password) {
+    throw new Error('認証情報を含むURLは使用できません');
+  }
+  const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  if (parsed.protocol !== 'https:' && !isLocalhost) {
+    throw new Error('URLは https:// で始まる必要があります（localhost は http 可）');
+  }
+}
+
 ipcMain.handle('config:testConnection', async (_event, url: string) => {
   try {
+    validateUrl(url);
     const res = await net.fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const data = await res.json() as { status: string; timestamp: number };
@@ -384,6 +406,7 @@ ipcMain.handle('config:testConnection', async (_event, url: string) => {
 });
 
 app.whenReady().then(() => {
+  migrateConfig(); // 旧バージョンユーザーの設定を自動移行
   createWindow();
   // 起動30秒後にInsights自動リフレッシュ（Dockerが起動するのを待つ）
   setTimeout(() => autoRefreshInsights().catch(() => {}), 30000);

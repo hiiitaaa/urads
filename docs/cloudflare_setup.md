@@ -15,7 +15,7 @@ https://dash.cloudflare.com/ でアカウント作成。
 ### 2.1 workers.dev サブドメイン登録
 
 初回のみ。Workers & Pages → Onboarding でサブドメイン名を決める。
-例: `nohara-ce` → `*.nohara-ce.workers.dev`
+例: `YOUR_USERNAME` → `*.YOUR_USERNAME.workers.dev`
 
 ### 2.2 Workers デプロイ
 

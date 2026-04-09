@@ -135,7 +135,7 @@ Meta Developer Portal を使うには 2FA が**必須**です。
 ### 4-1. リポジトリ取得
 
 ```bash
-git clone https://github.com/nohara-ce/urads.git
+git clone https://github.com/YOUR_USERNAME/urads.git
 cd urads
 ```
 

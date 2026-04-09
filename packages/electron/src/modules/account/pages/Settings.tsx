@@ -281,11 +281,22 @@ function ServerSettings({ health }: { health: string }): React.JSX.Element {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [saved, setSaved] = useState(false);
+  const [isShared, setIsShared] = useState(true);
+
+  React.useEffect(() => {
+    (window as any).urads.configIsSharedServer().then((v: boolean) => setIsShared(v)).catch(() => {});
+  }, [saved]);
 
   const handleTest = async () => {
     const normalized = newUrl.replace(/\/+$/, '');
-    if (!normalized.startsWith('https://') && !normalized.startsWith('http://localhost') && !normalized.startsWith('http://127.0.0.1')) {
-      setTestResult({ ok: false, error: 'URLは https:// で始まる必要があります（localhost は http 可）' });
+    try {
+      const parsed = new URL(normalized);
+      if (parsed.username || parsed.password) {
+        setTestResult({ ok: false, error: '認証情報を含むURLは使用できません' });
+        return;
+      }
+    } catch {
+      setTestResult({ ok: false, error: '有効なURLを入力してください' });
       return;
     }
     setTesting(true);
@@ -306,7 +317,13 @@ function ServerSettings({ health }: { health: string }): React.JSX.Element {
     setSaved(true);
     setEditing(false);
     setTimeout(() => setSaved(false), 3000);
-    // リロードを促す
+  };
+
+  const handleSwitchToShared = async () => {
+    await (window as any).urads.configSetSharedServer();
+    setSaved(true);
+    setEditing(false);
+    setTimeout(() => setSaved(false), 3000);
   };
 
   return (
@@ -314,11 +331,13 @@ function ServerSettings({ health }: { health: string }): React.JSX.Element {
       <h2 style={{ fontSize: 18, marginBottom: 12 }}>サーバー接続</h2>
       <div style={{ padding: 16, borderRadius: 8, background: '#f8f9fa' }}>
         <p>Workers API: <strong>{health}</strong></p>
-        <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>エンドポイント: {API_BASE}</p>
+        <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>
+          {isShared ? '共有サーバー' : 'カスタムサーバー'}
+        </p>
 
         {!editing ? (
           <div style={{ marginTop: 12 }}>
-            <button onClick={() => { setEditing(true); setNewUrl(String(API_BASE)); setTestResult(null); }}
+            <button onClick={() => { setEditing(true); setNewUrl(''); setTestResult(null); }}
               style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid #ddd', background: 'transparent', color: '#666', fontSize: 12, cursor: 'pointer' }}>
               サーバーを変更
             </button>
@@ -326,10 +345,17 @@ function ServerSettings({ health }: { health: string }): React.JSX.Element {
           </div>
         ) : (
           <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fff', border: '1px solid #e0e0e0' }}>
+            {!isShared && (
+              <button onClick={handleSwitchToShared}
+                style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #ddd', background: '#fff', fontSize: 12, cursor: 'pointer', marginBottom: 12, display: 'block' }}>
+                共有サーバーに戻す
+              </button>
+            )}
+            <p style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>カスタムサーバーURL:</p>
             <input
               type="url" value={newUrl}
               onChange={(e) => { setNewUrl(e.target.value); setTestResult(null); }}
-              placeholder="https://urads-api.xxxxx.workers.dev"
+              placeholder="https://your-worker.your-subdomain.workers.dev"
               style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }}
             />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

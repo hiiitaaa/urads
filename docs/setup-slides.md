@@ -229,7 +229,7 @@ https://localhost:8890/delete
 ターミナル / PowerShell で以下を 1 行ずつ入力して Enter:
 
 ```
-git clone https://github.com/nohara-ce/urads.git
+git clone https://github.com/YOUR_USERNAME/urads.git
 cd urads
 ```
 

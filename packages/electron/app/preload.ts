@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('urads', {
   // アプリ設定（セットアップウィザード）
   configGetApiBase: () => ipcRenderer.invoke('config:getApiBase'),
   configSetApiBase: (url: string) => ipcRenderer.invoke('config:setApiBase', url),
+  configSetSharedServer: () => ipcRenderer.invoke('config:setSharedServer'),
+  configIsSharedServer: () => ipcRenderer.invoke('config:isSharedServer'),
   configIsSetupCompleted: () => ipcRenderer.invoke('config:isSetupCompleted'),
   configCompleteSetup: () => ipcRenderer.invoke('config:completeSetup'),
   configTestConnection: (url: string) => ipcRenderer.invoke('config:testConnection', url),

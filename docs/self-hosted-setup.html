@@ -6,433 +6,604 @@
 <title>Urads 個別サーバーセットアップガイド</title>
 <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@300;400;500;700&family=Noto+Sans+JP:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
+/*
+  レイアウトルール:
+  - 全スライド共通: 中央に max-width:560px のカードを1枚配置
+  - カード内は全て左揃え
+  - 見出し(h3)・説明文・ステップ・コマンド・注意 全てカード内に収める
+  - タイトル/パート区切り/完了スライドのみ中央揃え（カードなし）
+*/
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
 body {
   font-family: "M PLUS Rounded 1c", "Noto Sans JP", "Hiragino Sans", sans-serif;
-  background: #1E1A2E; color: #E8E4F0; overflow: hidden; height: 100vh;
-  letter-spacing: 0.04em; line-height: 1.8;
+  background: #F8F5FC;
+  color: #2D2640;
+  overflow: hidden;
+  height: 100vh;
+  letter-spacing: 0.04em;
+  line-height: 1.8;
 }
 
-/* スライド */
-.slide {
-  display: none; flex-direction: column; justify-content: center; align-items: center;
-  height: calc(100vh - 56px); padding: 40px 60px; text-align: center;
-  animation: fadeIn 0.3s ease;
+/* 背景装飾 */
+body::before {
+  content: ''; position: fixed; top: -200px; right: -150px;
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, rgba(124,92,191,0.07) 0%, transparent 70%);
+  border-radius: 50%; pointer-events: none;
 }
-.slide.active { display: flex; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-/* テキスト */
-h1 { font-family: "Noto Sans JP", sans-serif; font-size: 34px; font-weight: 700; color: #fff; margin-bottom: 16px; letter-spacing: 0.02em; line-height: 1.4; }
-h2 { font-family: "Noto Sans JP", sans-serif; font-size: 26px; font-weight: 600; color: #fff; margin-bottom: 12px; letter-spacing: 0.02em; line-height: 1.4; }
-h3 { font-size: 20px; font-weight: 500; color: #D4A853; margin-bottom: 10px; letter-spacing: 0.03em; }
-p { font-size: 16px; max-width: 600px; color: #C4BFD4; }
-.subtitle { font-size: 14px; color: #A89BB8; margin-top: 8px; }
-.accent { color: #D4A853; }
-.purple { color: #A78BDB; }
-.green { color: #6BBF8A; }
-
-/* パートラベル */
-.part-label {
-  display: inline-block; padding: 5px 14px; border-radius: 20px;
-  background: linear-gradient(135deg, #D4A853, #E8C97A);
-  color: #2D2640; font-size: 13px; font-weight: 500; margin-bottom: 16px;
+body::after {
+  content: ''; position: fixed; bottom: -150px; left: -100px;
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, rgba(212,168,83,0.05) 0%, transparent 70%);
+  border-radius: 50%; pointer-events: none;
 }
 
-/* ステップリスト */
-.steps { text-align: left; max-width: 540px; width: 100%; list-style: none; counter-reset: step; }
-.steps li {
-  font-size: 16px; line-height: 2.2; color: #E8E4F0; position: relative;
-  padding-left: 36px; counter-increment: step;
+/* 星キラキラ */
+.sparkles { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.sparkles span { position: absolute; color: #D4A853; opacity: 0; animation: twinkle 5s infinite; }
+.sparkles span:nth-child(1) { top: 10%; left: 6%; animation-delay: 0s; font-size: 12px; }
+.sparkles span:nth-child(2) { top: 18%; right: 10%; animation-delay: 1.5s; font-size: 9px; }
+.sparkles span:nth-child(3) { top: 65%; left: 8%; animation-delay: 3s; font-size: 14px; }
+.sparkles span:nth-child(4) { top: 30%; right: 6%; animation-delay: 0.8s; font-size: 10px; }
+.sparkles span:nth-child(5) { bottom: 25%; right: 12%; animation-delay: 2.2s; font-size: 11px; }
+.sparkles span:nth-child(6) { bottom: 40%; left: 4%; animation-delay: 4s; font-size: 8px; }
+@keyframes twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.6); }
+  50% { opacity: 0.35; transform: scale(1); }
 }
-.steps li::before {
-  content: counter(step); position: absolute; left: 0; top: 4px;
-  width: 24px; height: 24px; border-radius: 50%;
-  background: rgba(124, 92, 191, 0.3); color: #A78BDB;
-  font-size: 13px; font-weight: 600;
-  display: flex; align-items: center; justify-content: center;
-}
-.steps li strong { color: #fff; }
-
-/* コマンドブロック */
-.cmd {
-  background: #2A2540; border-radius: 12px; padding: 14px 20px; margin: 12px 0;
-  font-family: "JetBrains Mono", "Consolas", monospace; font-size: 15px;
-  color: #6BBF8A; text-align: left; max-width: 540px; width: 100%;
-  position: relative; cursor: pointer; border: 1.5px solid #3D3660;
-  transition: border-color 0.2s, box-shadow 0.2s; letter-spacing: 0;
-}
-.cmd:hover { border-color: #7C5CBF; box-shadow: 0 0 0 3px rgba(124, 92, 191, 0.15); }
-.cmd::after {
-  content: '✦ クリックでコピー'; position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
-  font-size: 11px; color: #7A7089; font-family: "M PLUS Rounded 1c", sans-serif; letter-spacing: 0.04em;
-}
-.cmd.copied { border-color: #6BBF8A; }
-.cmd.copied::after { content: '✦ コピーしました！'; color: #6BBF8A; }
-
-/* スクリーンショットプレースホルダー */
-.screenshot {
-  background: #2A2540; border: 2px dashed #3D3660; border-radius: 16px;
-  padding: 32px; margin: 14px 0; max-width: 460px; width: 100%;
-  color: #7A7089; font-size: 13px; min-height: 100px;
-  display: flex; align-items: center; justify-content: center;
-}
-
-/* URL表示 */
-.url-box {
-  background: #2A2540; border: 1.5px solid #3D3660; border-radius: 12px;
-  padding: 12px 16px; font-size: 14px; color: #A78BDB;
-  max-width: 460px; width: 100%; margin: 8px 0; text-align: left;
-  word-break: break-all; font-family: "JetBrains Mono", monospace; letter-spacing: 0;
-}
-
-/* 注意ボックス */
-.note {
-  background: rgba(215, 107, 107, 0.1); border: 1.5px solid rgba(215, 107, 107, 0.4);
-  border-radius: 12px; padding: 14px 18px; margin: 12px 0; max-width: 540px; width: 100%;
-  text-align: left; font-size: 14px; color: #D96B6B; line-height: 1.7;
-}
-.note-gold {
-  background: rgba(212, 168, 83, 0.1); border-color: rgba(212, 168, 83, 0.4); color: #D4A853;
-}
-.note-green {
-  background: rgba(107, 191, 138, 0.1); border-color: rgba(107, 191, 138, 0.4); color: #6BBF8A;
-}
-
-/* 表 */
-table { border-collapse: collapse; margin: 14px 0; max-width: 540px; width: 100%; }
-th, td { padding: 10px 14px; text-align: left; font-size: 14px; border-bottom: 1px solid #3D3660; }
-th { color: #D4A853; font-weight: 500; }
-td { color: #C4BFD4; }
-
-/* チェックリスト */
-.checklist { text-align: left; max-width: 420px; width: 100%; list-style: none; }
-.checklist li { font-size: 16px; line-height: 2.4; color: #E8E4F0; }
-.checklist li::before { content: '☽ '; color: #A78BDB; }
-
-/* ナビゲーション */
-.nav {
-  position: fixed; bottom: 0; left: 0; right: 0;
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 24px; background: rgba(30, 26, 46, 0.97);
-  border-top: 1px solid #3D3660; height: 56px;
-}
-.nav button {
-  padding: 8px 22px; border-radius: 10px; border: none; cursor: pointer;
-  font-size: 14px; font-family: "M PLUS Rounded 1c", sans-serif;
-  transition: all 0.2s ease; letter-spacing: 0.04em;
-}
-.nav .prev { background: #2A2540; color: #A89BB8; border: 1px solid #3D3660; }
-.nav .prev:hover { background: #352F50; color: #E8E4F0; }
-.nav .next { background: #7C5CBF; color: #fff; box-shadow: 0 2px 8px rgba(124, 92, 191, 0.3); }
-.nav .next:hover { background: #A78BDB; }
-.nav button:disabled { opacity: 0.3; cursor: default; }
-.page-num { color: #7A7089; font-size: 13px; }
 
 /* プログレスバー */
 .progress {
-  position: fixed; top: 0; left: 0; height: 3px;
+  position: fixed; top: 0; left: 0; height: 3px; z-index: 100;
   background: linear-gradient(90deg, #7C5CBF, #D4A853);
-  transition: width 0.4s ease; z-index: 100; border-radius: 0 2px 2px 0;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 8px rgba(212, 168, 83, 0.3);
 }
 
-/* 装飾 */
-.deco { position: absolute; font-size: 48px; opacity: 0.05; pointer-events: none; }
+/* ===== スライド共通 ===== */
+.slide {
+  display: none; flex-direction: column; justify-content: center; align-items: center;
+  height: calc(100vh - 56px); padding: 24px;
+  position: relative; z-index: 1;
+}
+.slide.active { display: flex; animation: fadeIn 0.35s ease; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== コンテンツカード（通常スライド） ===== */
+.card {
+  background: rgba(255,255,255,0.88);
+  backdrop-filter: blur(8px);
+  border: 1px solid #E2DDE8;
+  border-radius: 20px;
+  padding: 36px 40px;
+  max-width: 560px; width: 100%;
+  box-shadow: 0 4px 24px rgba(45, 38, 64, 0.06);
+  text-align: left;
+}
+.card h3 {
+  font-size: 19px; font-weight: 500; color: #7C5CBF;
+  margin-bottom: 16px; letter-spacing: 0.03em;
+  padding-bottom: 12px; border-bottom: 1px solid #EDEBF2;
+}
+.card p {
+  font-size: 15px; color: #5A5070; margin-bottom: 12px;
+}
+
+/* ステップ */
+.card ol { list-style: none; counter-reset: step; margin: 0; padding: 0; }
+.card ol li {
+  font-size: 15px; line-height: 1.7; color: #2D2640;
+  padding: 6px 0 6px 38px; position: relative; counter-increment: step;
+}
+.card ol li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 6px;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: linear-gradient(135deg, #7C5CBF, #A78BDB);
+  color: #fff; font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(124, 92, 191, 0.2);
+}
+.card ol li strong { color: #5B3D99; }
+
+/* コマンド */
+.card .cmd {
+  background: #2D2640; border-radius: 10px; padding: 12px 16px; margin: 8px 0;
+  font-family: "JetBrains Mono", "Consolas", monospace; font-size: 14px;
+  color: #6BBF8A; cursor: pointer; position: relative;
+  border: 1px solid #3D3660; transition: all 0.2s;
+  letter-spacing: 0; line-height: 1.5;
+}
+.card .cmd:hover { border-color: #7C5CBF; transform: translateY(-1px); box-shadow: 0 3px 12px rgba(124,92,191,0.15); }
+.card .cmd .copy-hint {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 10px; color: #7A7089; font-family: "M PLUS Rounded 1c", sans-serif;
+}
+.card .cmd.copied { border-color: #6BBF8A; }
+.card .cmd.copied .copy-hint { color: #6BBF8A; }
+
+/* 注意ボックス */
+.card .note {
+  border-radius: 10px; padding: 12px 16px; margin: 10px 0;
+  font-size: 14px; line-height: 1.7;
+}
+.card .note-warn {
+  background: rgba(215,107,107,0.06); border: 1px solid rgba(215,107,107,0.25); color: #C45555;
+}
+.card .note-gold {
+  background: rgba(212,168,83,0.06); border: 1px solid rgba(212,168,83,0.25); color: #B8923A;
+}
+.card .note-green {
+  background: rgba(74,157,107,0.06); border: 1px solid rgba(74,157,107,0.25); color: #3D8A5C;
+}
+
+/* スクリーンショット */
+.card .screenshot {
+  background: rgba(124,92,191,0.04); border: 1.5px dashed #D2CBE0;
+  border-radius: 12px; padding: 24px; margin: 10px 0;
+  color: #A89BB8; font-size: 12px; text-align: center;
+}
+
+/* テーブル */
+.card table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.card th, .card td { padding: 8px 12px; font-size: 14px; text-align: left; }
+.card th { color: #7C5CBF; font-weight: 500; border-bottom: 2px solid #EDEBF2; }
+.card td { color: #5A5070; border-bottom: 1px solid #F0EDF5; }
+.card tr:last-child td { border-bottom: none; }
+
+/* チェックリスト */
+.card .checklist { list-style: none; }
+.card .checklist li {
+  font-size: 15px; line-height: 2.4; color: #2D2640;
+  padding-left: 28px; position: relative;
+}
+.card .checklist li::before {
+  content: '☽'; position: absolute; left: 0; color: #D4A853; font-size: 16px;
+}
+
+/* URL表示 */
+.card .url-box {
+  background: #F0EDF5; border-radius: 8px; padding: 10px 14px;
+  font-family: "JetBrains Mono", monospace; font-size: 13px;
+  color: #7C5CBF; margin: 8px 0; word-break: break-all; letter-spacing: 0;
+}
+
+/* ===== タイトル / パート区切り / 完了（カードなし・中央揃え） ===== */
+.slide-hero {
+  text-align: center;
+  background: linear-gradient(160deg, #1E1A2E 0%, #2D1F4E 50%, #1E2A3E 100%);
+}
+.slide-hero h1 {
+  font-family: "Noto Sans JP", sans-serif;
+  font-size: 36px; font-weight: 700; line-height: 1.4;
+  background: linear-gradient(135deg, #E8C97A, #D4A853, #A78BDB);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; margin-bottom: 16px;
+}
+.slide-hero h2 {
+  font-family: "Noto Sans JP", sans-serif;
+  font-size: 26px; font-weight: 600; color: #fff;
+  margin-bottom: 12px;
+}
+.slide-hero p { font-size: 16px; color: #C4BFD4; max-width: 420px; }
+.slide-hero .subtitle { font-size: 14px; color: #A89BB8; margin-top: 8px; }
+.slide-hero .part-label {
+  display: inline-block; padding: 6px 18px; border-radius: 20px;
+  background: linear-gradient(135deg, #D4A853, #E8C97A);
+  color: #2D2640; font-size: 13px; font-weight: 600;
+  margin-bottom: 20px; box-shadow: 0 2px 10px rgba(212,168,83,0.3);
+}
+
+/* 完了スライド */
+.slide-complete {
+  text-align: center;
+  background: linear-gradient(160deg, #1A2E22 0%, #1E2A2A 50%, #1E1A2E 100%);
+}
+.slide-complete h1 {
+  font-family: "Noto Sans JP", sans-serif;
+  font-size: 36px; font-weight: 700;
+  background: linear-gradient(135deg, #6BBF8A, #E8C97A);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; margin-bottom: 12px;
+}
+.slide-complete p { font-size: 16px; color: #B8D4C4; max-width: 400px; }
+.slide-complete .cmd {
+  background: #2D2640; border-radius: 10px; padding: 14px 20px; margin: 20px 0;
+  font-family: "JetBrains Mono", "Consolas", monospace; font-size: 14px;
+  color: #6BBF8A; cursor: pointer; border: 1px solid #3D3660;
+  max-width: 400px; width: 100%; text-align: left;
+  position: relative; transition: all 0.2s; letter-spacing: 0;
+}
+.slide-complete .cmd:hover { border-color: #6BBF8A; }
+.slide-complete .cmd .copy-hint {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 10px; color: #7A7089; font-family: "M PLUS Rounded 1c", sans-serif;
+}
+.slide-complete .cmd.copied .copy-hint { color: #6BBF8A; }
+.slide-complete .subtitle { font-size: 13px; color: #8AB89C; }
+
+/* トラブルシューティング */
+.slide-trouble {
+  text-align: center;
+  background: linear-gradient(160deg, #1E1A2E 0%, #2A1F3E 100%);
+}
+.slide-trouble h2 { font-family: "Noto Sans JP", sans-serif; font-size: 24px; color: #E8C97A; margin-bottom: 16px; }
+.slide-trouble .trouble-card {
+  background: rgba(255,255,255,0.05); backdrop-filter: blur(4px);
+  border: 1px solid #3D3660; border-radius: 16px;
+  padding: 24px 28px; max-width: 540px; width: 100%; text-align: left;
+}
+.slide-trouble table { width: 100%; border-collapse: collapse; }
+.slide-trouble th, .slide-trouble td { padding: 10px 12px; font-size: 13px; }
+.slide-trouble th { color: #D4A853; font-weight: 500; border-bottom: 1px solid #3D3660; }
+.slide-trouble td { color: #C4BFD4; border-bottom: 1px solid rgba(61,54,96,0.5); }
+.slide-trouble tr:last-child td { border-bottom: none; }
+.slide-trouble code { color: #A78BDB; background: rgba(167,139,219,0.1); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+.slide-trouble .log-info { font-size: 12px; color: #7A7089; margin-top: 12px; }
+
+/* ===== ナビゲーション ===== */
+.nav {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 28px; height: 56px; z-index: 10;
+  background: rgba(248,245,252,0.92); backdrop-filter: blur(10px);
+  border-top: 1px solid #E2DDE8;
+}
+/* ダークスライド表示時のナビ色はJSで切り替え */
+.nav.dark { background: rgba(30,26,46,0.92); border-top-color: #3D3660; }
+.nav button {
+  padding: 9px 22px; border-radius: 10px; border: none; cursor: pointer;
+  font-size: 14px; font-family: "M PLUS Rounded 1c", sans-serif;
+  font-weight: 500; transition: all 0.2s; letter-spacing: 0.04em;
+}
+.nav .prev { background: #fff; color: #7A7089; border: 1px solid #E2DDE8; }
+.nav .prev:hover { border-color: #7C5CBF; color: #5B3D99; }
+.nav.dark .prev { background: #2A2540; color: #A89BB8; border-color: #3D3660; }
+.nav.dark .prev:hover { border-color: #7C5CBF; color: #E8E4F0; }
+.nav .next {
+  background: linear-gradient(135deg, #7C5CBF, #A78BDB);
+  color: #fff; box-shadow: 0 2px 10px rgba(124,92,191,0.25);
+}
+.nav .next:hover { box-shadow: 0 4px 16px rgba(124,92,191,0.35); transform: translateY(-1px); }
+.nav button:disabled { opacity: 0.3; cursor: default; transform: none !important; }
+.page-num { color: #A89BB8; font-size: 13px; }
+.nav.dark .page-num { color: #7A7089; }
 </style>
 </head>
 <body>
 
+<div class="sparkles"><span>✦</span><span>✧</span><span>✦</span><span>✧</span><span>✦</span><span>✧</span></div>
 <div class="progress" id="progress"></div>
 
-<!-- ===== 1: タイトル ===== -->
-<div class="slide active">
-  <h1>✦ Urads 個別サーバー<br>セットアップガイド</h1>
-  <p>自分の Cloudflare アカウントで<br>安全にサーバーを立てる方法</p>
-  <p class="subtitle">所要時間: 約50分 ｜ 5パート</p>
+<!-- 1: タイトル -->
+<div class="slide slide-hero active" data-dark>
+  <h1>✦ Urads<br>個別サーバーセットアップ</h1>
+  <p>あなた専用の安全なサーバーを<br>ゼロから立ち上げるガイドです</p>
+  <p class="subtitle">所要時間 約50分 ｜ 初めてでもOK</p>
 </div>
 
-<!-- ===== 2: チェックリスト ===== -->
+<!-- 2: チェックリスト -->
 <div class="slide">
-  <h2>☽ 始める前に確認</h2>
-  <p class="subtitle" style="margin-bottom: 16px;">これらが揃っていれば大丈夫です</p>
-  <ul class="checklist">
-    <li>PC（Windows または Mac）</li>
-    <li>Google Chrome がインストール済み</li>
-    <li>Facebook アカウント</li>
-    <li>Threads アカウント</li>
-    <li>スマホ（認証アプリ用）</li>
-    <li>メモ帳（ID をメモするため）</li>
-  </ul>
+  <div class="card">
+    <h3>☽ 始める前に確認</h3>
+    <p>これらが揃っていれば大丈夫です</p>
+    <ul class="checklist">
+      <li>PC（Windows または Mac）</li>
+      <li>Google Chrome</li>
+      <li>Facebook アカウント</li>
+      <li>Threads アカウント</li>
+      <li>スマホ（認証アプリ用）</li>
+      <li>メモ帳アプリ</li>
+    </ul>
+  </div>
 </div>
 
-<!-- ===== Part 1: ツール ===== -->
-<div class="slide">
+<!-- Part 1 -->
+<div class="slide slide-hero" data-dark>
   <span class="part-label">✦ Part 1 / 5</span>
   <h2>ツールをインストール</h2>
   <p>3つの無料ツールを入れます</p>
-  <p class="subtitle">約5分で完了します</p>
+  <p class="subtitle">約5分で完了</p>
 </div>
 
-<!-- 4: Node.js -->
+<!-- 1-1 -->
 <div class="slide">
-  <h3>1-1. Node.js をインストール</h3>
-  <ol class="steps">
-    <li>ブラウザで <strong>nodejs.org</strong> を開く</li>
-    <li>緑色の <strong>「LTS」ボタン</strong> をクリック</li>
-    <li>ダウンロードしたファイルをダブルクリック</li>
-    <li>「Next」を押し続けて「Install」→ 完了</li>
-  </ol>
-  <div class="screenshot">スクリーンショット: nodejs.org のLTSダウンロードボタン</div>
+  <div class="card">
+    <h3>1-1. Node.js をインストール</h3>
+    <ol>
+      <li>ブラウザで <strong>nodejs.org</strong> を開く</li>
+      <li>緑色の <strong>「LTS」ボタン</strong> をクリック</li>
+      <li>ダウンロードしたファイルをダブルクリック</li>
+      <li>「Next」→「Install」→ 完了</li>
+    </ol>
+    <div class="screenshot">スクリーンショット: nodejs.org のLTSボタン</div>
+  </div>
 </div>
 
-<!-- 5: pnpm -->
+<!-- 1-2 -->
 <div class="slide">
-  <h3>1-2. pnpm を有効化</h3>
-  <p>PowerShell を開いて以下をコピー&ペースト:</p>
-  <div class="cmd" onclick="copyCmd(this)">corepack enable</div>
-  <p class="subtitle">何も表示されなければ成功です ✦</p>
+  <div class="card">
+    <h3>1-2. pnpm を有効化</h3>
+    <p>PowerShell を開いて以下を実行:</p>
+    <div class="cmd" onclick="copyCmd(this)">corepack enable<span class="copy-hint">✦ コピー</span></div>
+    <p style="color: #A89BB8; font-size: 13px;">何も表示されなければ成功です</p>
+  </div>
 </div>
 
-<!-- 6: Git -->
+<!-- 1-3 -->
 <div class="slide">
-  <h3>1-3. Git をインストール</h3>
-  <ol class="steps">
-    <li>ブラウザで <strong>git-scm.com/download/win</strong> を開く</li>
-    <li>自動でダウンロードが始まります</li>
-    <li>インストーラーを実行 → 全部「Next」でOK</li>
-    <li>最後に「Install」→ 完了</li>
-  </ol>
-  <div class="screenshot">スクリーンショット: Git インストール完了画面</div>
+  <div class="card">
+    <h3>1-3. Git をインストール</h3>
+    <ol>
+      <li>ブラウザで <strong>git-scm.com/download/win</strong> を開く</li>
+      <li>自動でダウンロードが始まります</li>
+      <li>インストーラーを実行 → 全部「Next」でOK</li>
+      <li>最後に「Install」→ 完了</li>
+    </ol>
+  </div>
 </div>
 
-<!-- ===== Part 2: Cloudflare ===== -->
-<div class="slide">
+<!-- Part 2 -->
+<div class="slide slide-hero" data-dark>
   <span class="part-label">✦ Part 2 / 5</span>
   <h2>Cloudflare に登録</h2>
-  <p>あなたのデータを安全に保存する<br>クラウドサービスです。無料で使えます</p>
-  <p class="subtitle">約10分で完了します</p>
+  <p>データを安全に保存するクラウドサービス。無料です</p>
+  <p class="subtitle">約10分で完了</p>
 </div>
 
-<!-- 8: アカウント作成 -->
+<!-- 2-1 -->
 <div class="slide">
-  <h3>2-1. アカウントを作成</h3>
-  <ol class="steps">
-    <li>ブラウザで <strong>dash.cloudflare.com/sign-up</strong> を開く</li>
-    <li>メールアドレスとパスワードを入力</li>
-    <li>「Sign Up」をクリック</li>
-    <li>届いたメールのリンクをクリックして確認</li>
-  </ol>
-  <div class="screenshot">スクリーンショット: Cloudflare サインアップ画面</div>
+  <div class="card">
+    <h3>2-1. アカウントを作成</h3>
+    <ol>
+      <li>ブラウザで <strong>dash.cloudflare.com/sign-up</strong> を開く</li>
+      <li>メールアドレスとパスワードを入力</li>
+      <li>「Sign Up」をクリック</li>
+      <li>届いたメールのリンクをクリック</li>
+    </ol>
+    <div class="screenshot">スクリーンショット: Cloudflare サインアップ画面</div>
+  </div>
 </div>
 
-<!-- 9: wrangler login -->
+<!-- 2-2 -->
 <div class="slide">
-  <h3>2-2. Wrangler にログイン</h3>
-  <p>PowerShell で以下を実行してください:</p>
-  <div class="cmd" onclick="copyCmd(this)">npx wrangler login</div>
-  <ol class="steps">
-    <li>ブラウザが自動で開きます</li>
-    <li><strong>「Allow」</strong>（許可）をクリック</li>
-    <li>ターミナルに「Successfully logged in」と出ればOK ✦</li>
-  </ol>
+  <div class="card">
+    <h3>2-2. Wrangler にログイン</h3>
+    <p>PowerShell で以下を実行:</p>
+    <div class="cmd" onclick="copyCmd(this)">npx wrangler login<span class="copy-hint">✦ コピー</span></div>
+    <ol>
+      <li>ブラウザが自動で開きます</li>
+      <li><strong>「Allow」</strong>（許可）をクリック</li>
+      <li>「Successfully logged in」と出ればOK</li>
+    </ol>
+  </div>
 </div>
 
-<!-- ===== Part 3: Threads API ===== -->
-<div class="slide">
+<!-- Part 3 -->
+<div class="slide slide-hero" data-dark>
   <span class="part-label">✦ Part 3 / 5</span>
   <h2>Threads API を準備</h2>
-  <p><strong class="accent">ここが一番時間がかかります</strong></p>
-  <p>落ち着いて1ステップずつ進めましょう</p>
-  <p class="subtitle">約20分で完了します</p>
+  <p style="color: #E8C97A;">ここが一番大事なパートです</p>
+  <p>落ち着いて進めましょう</p>
+  <p class="subtitle">約20分で完了</p>
 </div>
 
-<!-- 11: 二段階認証 -->
+<!-- 3-1 -->
 <div class="slide">
-  <h3>3-1. Facebook の二段階認証をONにする</h3>
-  <div class="note">これが必須です。やらないと次に進めません！</div>
-  <ol class="steps">
-    <li>スマホで <strong>Google Authenticator</strong> をインストール</li>
-    <li>PCで <strong>facebook.com/settings</strong> を開く</li>
-    <li>「パスワードとセキュリティ」→「二段階認証」</li>
-    <li>「認証アプリ」を選択 → QRコードをスマホで読み取り</li>
-    <li>表示された6桁の数字を入力 → 完了</li>
-  </ol>
+  <div class="card">
+    <h3>3-1. Facebook の二段階認証をON</h3>
+    <div class="note note-warn">⚠ これが必須です。やらないと先に進めません</div>
+    <ol>
+      <li>スマホで <strong>Google Authenticator</strong> をインストール</li>
+      <li>PCで <strong>facebook.com/settings</strong> を開く</li>
+      <li>「パスワードとセキュリティ」→「二段階認証」</li>
+      <li>「認証アプリ」→ QRコードをスマホで読み取り</li>
+      <li>6桁の数字を入力 → 完了</li>
+    </ol>
+  </div>
 </div>
 
-<!-- 12: Facebookページ -->
+<!-- 3-2 -->
 <div class="slide">
-  <h3>3-2. Facebook ページを作成</h3>
-  <p>開発者ポータルに入るために必要です（1分で終わります）</p>
-  <ol class="steps">
-    <li>ブラウザで <strong>facebook.com/pages/create</strong> を開く</li>
-    <li>ページ名を入力（何でもOK。例:「占いラボ」）</li>
-    <li>カテゴリを選択（何でもOK）→「作成」</li>
-  </ol>
+  <div class="card">
+    <h3>3-2. Facebook ページを作成</h3>
+    <p>開発者ポータルに入るために必要です（1分で終わります）</p>
+    <ol>
+      <li>ブラウザで <strong>facebook.com/pages/create</strong> を開く</li>
+      <li>ページ名を入力（何でもOK。例:「占いラボ」）</li>
+      <li>カテゴリを選択（何でもOK）→「作成」</li>
+    </ol>
+  </div>
 </div>
 
-<!-- 13: 開発者ポータル -->
+<!-- 3-3 -->
 <div class="slide">
-  <h3>3-3. 開発者ポータルにアクセス</h3>
-  <ol class="steps">
-    <li>ブラウザで <strong>developers.facebook.com</strong> を開く</li>
-    <li>右上の「開始する」または「マイアプリ」をクリック</li>
-    <li>開発者規約に同意</li>
-  </ol>
-  <div class="note">「アクセス権がありません」と出たら<br>→ 3-1（二段階認証）と 3-2（ページ作成）を確認してください</div>
+  <div class="card">
+    <h3>3-3. 開発者ポータルにアクセス</h3>
+    <ol>
+      <li>ブラウザで <strong>developers.facebook.com</strong> を開く</li>
+      <li>右上の「開始する」か「マイアプリ」をクリック</li>
+      <li>開発者規約に同意</li>
+    </ol>
+    <div class="note note-gold">「アクセス権がありません」と出たら 3-1 と 3-2 を確認</div>
+  </div>
 </div>
 
-<!-- 14: アプリ作成 -->
+<!-- 3-4 -->
 <div class="slide">
-  <h3>3-4. アプリを作成</h3>
-  <ol class="steps">
-    <li>「アプリを作成」をクリック</li>
-    <li><strong class="accent">「Access Threads API」を選択</strong></li>
-    <li>アプリ名を入力（例:「Urads」）</li>
-    <li>メールアドレスを入力 →「作成」</li>
-  </ol>
-  <div class="note-gold note">必ず「Access Threads API」を選んでください。<br>他を選ぶとうまくいきません！</div>
+  <div class="card">
+    <h3>3-4. アプリを作成</h3>
+    <ol>
+      <li>「アプリを作成」をクリック</li>
+      <li><strong style="color: #7C5CBF;">「Access Threads API」を選択</strong></li>
+      <li>アプリ名を入力（例:「Urads」）</li>
+      <li>メールアドレスを入力 →「作成」</li>
+    </ol>
+    <div class="note note-gold">✦ 必ず「Access Threads API」を選んでください</div>
+  </div>
 </div>
 
-<!-- 15: リダイレクトURI -->
+<!-- 3-5 -->
 <div class="slide">
-  <h3>3-5. リダイレクト URI を設定</h3>
-  <p>左メニュー「Threads ログイン」→「設定」を開いて<br><strong>3つのURL</strong>を入力してください:</p>
-  <div class="cmd" onclick="copyCmd(this)">https://localhost:8890/callback</div>
-  <div class="cmd" onclick="copyCmd(this)">https://localhost:8890/uninstall</div>
-  <div class="cmd" onclick="copyCmd(this)">https://localhost:8890/delete</div>
-  <p class="subtitle">最後に「変更を保存」をクリック</p>
+  <div class="card">
+    <h3>3-5. リダイレクト URI を設定</h3>
+    <p>左メニュー「Threads ログイン」→「設定」で3つ入力:</p>
+    <div class="cmd" onclick="copyCmd(this)">https://localhost:8890/callback<span class="copy-hint">✦ コピー</span></div>
+    <div class="cmd" onclick="copyCmd(this)">https://localhost:8890/uninstall<span class="copy-hint">✦ コピー</span></div>
+    <div class="cmd" onclick="copyCmd(this)">https://localhost:8890/delete<span class="copy-hint">✦ コピー</span></div>
+    <p style="color: #A89BB8; font-size: 13px;">最後に「変更を保存」をクリック</p>
+  </div>
 </div>
 
-<!-- 16: App ID & Secret -->
+<!-- 3-6 -->
 <div class="slide">
-  <h3>3-6. App ID と App Secret をメモ</h3>
-  <ol class="steps">
-    <li>左メニュー「設定」→「基本」</li>
-    <li><strong>App ID</strong> の数字をコピー → メモ帳に貼り付け</li>
-    <li><strong>App Secret</strong> の「表示」→ コピー → メモ帳に貼り付け</li>
-  </ol>
-  <div class="note-gold note">✦ この2つは Part 4 で使います。なくさないで！</div>
+  <div class="card">
+    <h3>3-6. App ID と App Secret をメモ</h3>
+    <ol>
+      <li>左メニュー「設定」→「基本」</li>
+      <li><strong>App ID</strong> の数字をコピー → メモ帳に</li>
+      <li><strong>App Secret</strong> の「表示」→ コピー → メモ帳に</li>
+    </ol>
+    <div class="note note-gold">✦ この2つは Part 4 で使います。なくさないで！</div>
+  </div>
 </div>
 
-<!-- 17: テスター追加 -->
+<!-- 3-7 -->
 <div class="slide">
-  <h3>3-7. 自分をテスターに追加</h3>
-  <ol class="steps">
-    <li>左メニュー「アプリの役割」→「役割」</li>
-    <li>「Threads テスター」の「追加」をクリック</li>
-    <li>自分の <strong>Threads ユーザー名</strong> を入力 → 追加</li>
-  </ol>
-  <div class="screenshot">スクリーンショット: テスター追加画面</div>
+  <div class="card">
+    <h3>3-7. 自分をテスターに追加</h3>
+    <ol>
+      <li>左メニュー「アプリの役割」→「役割」</li>
+      <li>「Threads テスター」の「追加」をクリック</li>
+      <li>自分の <strong>Threads ユーザー名</strong> を入力 → 追加</li>
+    </ol>
+  </div>
 </div>
 
-<!-- 18: スマホ承認 -->
+<!-- 3-8 -->
 <div class="slide">
-  <h3>3-8. スマホで招待を承認</h3>
-  <div class="note">ここが一番迷いやすいポイントです！<br><strong>PCではなくスマホのThreadsアプリ</strong>で行います</div>
-  <ol class="steps">
-    <li>スマホで <strong>Threads アプリ</strong> を開く</li>
-    <li>プロフィール → 右上の <strong>設定アイコン</strong></li>
-    <li>「アカウント」→「ウェブサイトのアクセス許可」</li>
-    <li>「招待」タブ → <strong class="green">「承認」をタップ</strong></li>
-  </ol>
-  <div class="note">承認しないとこの後の認証が失敗します！</div>
+  <div class="card">
+    <h3>3-8. スマホで招待を承認</h3>
+    <div class="note note-warn">⚠ 一番迷いやすいポイント！<strong>スマホのThreadsアプリ</strong>で行います</div>
+    <ol>
+      <li>スマホで <strong>Threads アプリ</strong> を開く</li>
+      <li>プロフィール → 右上の <strong>設定</strong></li>
+      <li>「アカウント」→「ウェブサイトのアクセス許可」</li>
+      <li>「招待」タブ → <strong style="color: #4A9D6B;">「承認」をタップ</strong></li>
+    </ol>
+    <div class="note note-warn">承認しないとこの後の認証が失敗します</div>
+  </div>
 </div>
 
-<!-- ===== Part 4: セットアップ ===== -->
-<div class="slide">
+<!-- Part 4 -->
+<div class="slide slide-hero" data-dark>
   <span class="part-label">✦ Part 4 / 5</span>
   <h2>Urads をセットアップ</h2>
   <p>もう少しで完了です！</p>
-  <p class="subtitle">約10分で完了します</p>
+  <p class="subtitle">約10分で完了</p>
 </div>
 
-<!-- 20: git clone -->
+<!-- 4-1 -->
 <div class="slide">
-  <h3>4-1. ソースコードを取得</h3>
-  <p>PowerShell で以下を1行ずつ実行:</p>
-  <div class="cmd" onclick="copyCmd(this)">git clone https://github.com/nohara-ce/urads.git</div>
-  <div class="cmd" onclick="copyCmd(this)">cd urads</div>
+  <div class="card">
+    <h3>4-1. ソースコードを取得</h3>
+    <p>PowerShell で以下を1行ずつ実行:</p>
+    <div class="cmd" onclick="copyCmd(this)">git clone https://github.com/YOUR_USERNAME/urads.git<span class="copy-hint">✦ コピー</span></div>
+    <div class="cmd" onclick="copyCmd(this)">cd urads<span class="copy-hint">✦ コピー</span></div>
+  </div>
 </div>
 
-<!-- 21: pnpm setup -->
+<!-- 4-2 -->
 <div class="slide">
-  <h3>4-2. セットアップを実行</h3>
-  <p><strong>Windows:</strong></p>
-  <div class="cmd" onclick="copyCmd(this)">pnpm setup:win</div>
-  <p><strong>Mac:</strong></p>
-  <div class="cmd" onclick="copyCmd(this)">pnpm setup</div>
-  <p style="margin-top: 12px;">途中で聞かれます:</p>
-  <table>
-    <tr><td class="accent">THREADS_APP_ID:</td><td>→ 3-6 でメモした App ID</td></tr>
-    <tr><td class="accent">THREADS_APP_SECRET:</td><td>→ 3-6 でメモした App Secret</td></tr>
-  </table>
-  <div class="note note-green">✦ 最後に Workers URL が表示されます。コピーしてください！</div>
+  <div class="card">
+    <h3>4-2. セットアップを実行</h3>
+    <p><strong>Windows:</strong></p>
+    <div class="cmd" onclick="copyCmd(this)">pnpm setup:win<span class="copy-hint">✦ コピー</span></div>
+    <p><strong>Mac:</strong></p>
+    <div class="cmd" onclick="copyCmd(this)">pnpm setup<span class="copy-hint">✦ コピー</span></div>
+    <p style="margin-top: 12px; font-size: 14px; color: #5A5070;">途中で聞かれます:</p>
+    <table>
+      <tr><td style="color: #D4A853; font-weight: 500;">THREADS_APP_ID</td><td>→ 3-6 の App ID</td></tr>
+      <tr><td style="color: #D4A853; font-weight: 500;">THREADS_APP_SECRET</td><td>→ 3-6 の App Secret</td></tr>
+    </table>
+    <div class="note note-green">✦ 最後に Workers URL が表示されます。コピー！</div>
+  </div>
 </div>
 
-<!-- ===== Part 5: 起動 ===== -->
-<div class="slide">
+<!-- Part 5 -->
+<div class="slide slide-hero" data-dark>
   <span class="part-label">✦ Part 5 / 5</span>
   <h2>アプリを起動</h2>
   <p>最後のステップです！</p>
-  <p class="subtitle">約5分で完了します</p>
+  <p class="subtitle">約5分で完了</p>
 </div>
 
-<!-- 23: pnpm dev -->
+<!-- 5-1 -->
 <div class="slide">
-  <h3>5-1. アプリを起動する</h3>
-  <div class="cmd" onclick="copyCmd(this)">pnpm dev</div>
-  <p>アプリウィンドウが開きます ✦</p>
-  <div class="screenshot">スクリーンショット: Urads 起動画面</div>
+  <div class="card">
+    <h3>5-1. アプリを起動する</h3>
+    <div class="cmd" onclick="copyCmd(this)">pnpm dev<span class="copy-hint">✦ コピー</span></div>
+    <p>アプリウィンドウが開きます</p>
+    <div class="screenshot">スクリーンショット: Urads 起動画面</div>
+  </div>
 </div>
 
-<!-- 24: Workers URL -->
+<!-- 5-2 -->
 <div class="slide">
-  <h3>5-2. サーバーを接続</h3>
-  <ol class="steps">
-    <li>セットアップ画面で<strong>「自分のサーバーを使う」</strong>をクリック</li>
-    <li>Part 4 でコピーした Workers URL を貼り付け</li>
-    <li>「接続テスト」→ 「接続OK」が出ればOK ✦</li>
-  </ol>
-  <div class="url-box">https://urads-api.xxxxx.workers.dev</div>
+  <div class="card">
+    <h3>5-2. サーバーを接続</h3>
+    <ol>
+      <li>セットアップ画面で<strong>「自分のサーバーを使う」</strong>をクリック</li>
+      <li>Part 4 でコピーした Workers URL を貼り付け</li>
+      <li>「接続テスト」→「接続OK」が出ればOK</li>
+    </ol>
+    <div class="url-box">https://urads-api.xxxxx.workers.dev</div>
+  </div>
 </div>
 
-<!-- 25: Threads連携 -->
+<!-- 5-3 -->
 <div class="slide">
-  <h3>5-3. Threads アカウントを連携</h3>
-  <ol class="steps">
-    <li>「Threads アカウントを連携する」をクリック</li>
-    <li>ブラウザが開く → Threads でログイン</li>
-    <li>「許可する」をクリック</li>
-    <li>アプリに戻る →「連携しました」と表示 ✦</li>
-  </ol>
+  <div class="card">
+    <h3>5-3. Threads アカウントを連携</h3>
+    <ol>
+      <li>「Threads アカウントを連携する」をクリック</li>
+      <li>ブラウザが開く → Threads でログイン</li>
+      <li>「許可する」をクリック</li>
+      <li>アプリに戻る →「連携しました」と表示</li>
+    </ol>
+  </div>
 </div>
 
-<!-- 26: 完了 -->
-<div class="slide">
-  <h1 class="green">✦ セットアップ完了！</h1>
+<!-- 完了 -->
+<div class="slide slide-complete" data-dark>
+  <h1>✦ セットアップ完了！</h1>
   <p>「始める」をクリックして<br>Urads をお楽しみください</p>
-  <p style="margin-top: 24px; color: #A89BB8;">次回からの起動:</p>
-  <div class="cmd" onclick="copyCmd(this)">cd urads && pnpm dev</div>
+  <div class="cmd" onclick="copyCmd(this)">cd urads && pnpm dev<span class="copy-hint">✦ コピー</span></div>
+  <p class="subtitle">次回からはこのコマンドだけでOK</p>
 </div>
 
-<!-- 27: トラブルシューティング -->
-<div class="slide">
+<!-- トラブルシューティング -->
+<div class="slide slide-trouble" data-dark>
   <h2>☽ 困ったときは</h2>
-  <table>
-    <tr><th>症状</th><th>対処法</th></tr>
-    <tr><td>「node が見つからない」</td><td>1-1 をやり直す</td></tr>
-    <tr><td>wrangler login が開かない</td><td>URLを手動でブラウザに貼り付け</td></tr>
-    <tr><td>開発者ポータルで「アクセス権なし」</td><td>3-1 と 3-2 を確認</td></tr>
-    <tr><td>OAuth 認証が失敗する</td><td>3-8 のスマホ承認を確認</td></tr>
-    <tr><td>接続テストが失敗する</td><td>URLが https:// で始まるか確認</td></tr>
-  </table>
-  <p style="margin-top: 16px; font-size: 13px; color: #7A7089;">
-    ログ: <code style="color:#A78BDB;">%APPDATA%\Urads\logs\main.log</code>
-  </p>
+  <div class="trouble-card">
+    <table>
+      <tr><th>症状</th><th>対処法</th></tr>
+      <tr><td>「node が見つからない」</td><td>1-1 をやり直す</td></tr>
+      <tr><td>wrangler login が開かない</td><td>URLを手動でブラウザに貼り付け</td></tr>
+      <tr><td>「アクセス権がありません」</td><td>3-1 と 3-2 を確認</td></tr>
+      <tr><td>OAuth 認証が失敗</td><td>3-8 のスマホ承認を確認</td></tr>
+      <tr><td>接続テストが失敗</td><td>https:// で始まるか確認</td></tr>
+    </table>
+    <p class="log-info">ログ: <code>%APPDATA%\Urads\logs\main.log</code></p>
+  </div>
 </div>
 
 <!-- ナビゲーション -->
-<div class="nav">
+<div class="nav" id="nav">
   <button class="prev" onclick="prevSlide()" id="prevBtn">← 前へ</button>
   <span class="page-num" id="pageNum"></span>
   <button class="next" onclick="nextSlide()" id="nextBtn">次へ →</button>
@@ -440,6 +611,7 @@ td { color: #C4BFD4; }
 
 <script>
 const slides = document.querySelectorAll('.slide');
+const nav = document.getElementById('nav');
 let current = 0;
 
 function showSlide(n) {
@@ -450,6 +622,8 @@ function showSlide(n) {
   document.getElementById('prevBtn').disabled = current === 0;
   document.getElementById('nextBtn').disabled = current === slides.length - 1;
   document.getElementById('progress').style.width = `${((current + 1) / slides.length) * 100}%`;
+  // ダークスライドの場合ナビも暗くする
+  nav.classList.toggle('dark', slides[current].hasAttribute('data-dark'));
 }
 
 function nextSlide() { showSlide(current + 1); }
@@ -460,7 +634,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft') { e.preventDefault(); prevSlide(); }
 });
 
-// タッチスワイプ対応
 let touchStartX = 0;
 document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
 document.addEventListener('touchend', (e) => {
@@ -469,9 +642,15 @@ document.addEventListener('touchend', (e) => {
 });
 
 function copyCmd(el) {
-  navigator.clipboard.writeText(el.textContent.trim());
+  const text = el.childNodes[0].textContent.trim();
+  navigator.clipboard.writeText(text);
   el.classList.add('copied');
-  setTimeout(() => el.classList.remove('copied'), 1500);
+  const hint = el.querySelector('.copy-hint');
+  if (hint) hint.textContent = '✦ コピーしました！';
+  setTimeout(() => {
+    el.classList.remove('copied');
+    if (hint) hint.textContent = '✦ コピー';
+  }, 1500);
 }
 
 showSlide(0);

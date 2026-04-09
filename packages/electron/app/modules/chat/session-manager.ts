@@ -268,8 +268,8 @@ export async function processMessage(payload: { message?: string; skill?: string
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool_name: payload.skill || 'free_chat',
-          tool_input: { message: payload.message, skill: payload.skill },
-          tool_result: { response: fullText.slice(0, 500) },
+          tool_input: { skill: payload.skill },
+          tool_result: { success: true, length: fullText.length },
           confirmed: true,
         }),
       });
