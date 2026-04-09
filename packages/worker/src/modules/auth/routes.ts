@@ -22,17 +22,17 @@ authRoutes.post('/exchange', async (c) => {
   const { code } = await c.req.json<{ code: string }>();
   const licenseId = c.req.header('X-License-Id') || DEV_LICENSE_ID;
 
-  // 1. 認可コード → 短期トークン
+  // 1. 認可コード → 短期トークン（multipart/form-data 方式 — 公式ドキュメント準拠）
+  const formData = new FormData();
+  formData.append('client_id', c.env.THREADS_APP_ID.trim());
+  formData.append('client_secret', c.env.THREADS_APP_SECRET.trim());
+  formData.append('code', code);
+  formData.append('grant_type', 'authorization_code');
+  formData.append('redirect_uri', c.env.THREADS_REDIRECT_URI.trim());
+  console.log('[exchange] Sending as multipart/form-data to', `${THREADS_API}/oauth/access_token`);
   const tokenRes = await fetch(`${THREADS_API}/oauth/access_token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: c.env.THREADS_APP_ID,
-      client_secret: c.env.THREADS_APP_SECRET,
-      code,
-      grant_type: 'authorization_code',
-      redirect_uri: c.env.THREADS_REDIRECT_URI,
-    }),
+    body: formData,
   });
 
   if (!tokenRes.ok) {
@@ -46,7 +46,7 @@ authRoutes.post('/exchange', async (c) => {
 
   // 2. 短期 → 長期トークン
   const longRes = await fetch(
-    `${THREADS_API}/access_token?grant_type=th_exchange_token&client_secret=${c.env.THREADS_APP_SECRET}&access_token=${shortToken}`
+    `${THREADS_API}/access_token?grant_type=th_exchange_token&client_secret=${c.env.THREADS_APP_SECRET.trim()}&access_token=${shortToken}`
   );
 
   if (!longRes.ok) {
