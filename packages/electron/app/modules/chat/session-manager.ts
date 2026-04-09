@@ -11,8 +11,39 @@ import {
 import * as sessionStore from './session-store';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { execSync } from 'child_process';
 
 import { getApiBase } from '../config/api-base';
+
+/**
+ * Claude Code CLIのパスを検出
+ */
+function findClaudeExecutable(): string | undefined {
+  // 環境変数で明示指定
+  if (process.env.CLAUDE_CODE_PATH && existsSync(process.env.CLAUDE_CODE_PATH)) {
+    return process.env.CLAUDE_CODE_PATH;
+  }
+
+  // よくあるインストール先を順に探す
+  const candidates = [
+    join(process.env.HOME || '', '.local', 'bin', 'claude'),
+    join(process.env.HOME || '', '.claude', 'bin', 'claude'),
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+  ];
+
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+
+  // which で探す（最終手段）
+  try {
+    const result = execSync('which claude', { encoding: 'utf-8', timeout: 3000 }).trim();
+    if (result && existsSync(result)) return result;
+  } catch { /* not found */ }
+
+  return undefined;
+}
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30分
 
@@ -104,8 +135,14 @@ async function buildSystemPrompt(): Promise<string> {
 async function createSessionWithContext(): Promise<SDKSession> {
   const systemPrompt = await buildSystemPrompt();
 
+  const claudePath = findClaudeExecutable();
+  if (!claudePath) {
+    throw new Error('Claude Codeがインストールされていません。https://claude.ai/code からインストールしてください。');
+  }
+
   const session = unstable_v2_createSession({
     model: 'claude-sonnet-4-6',
+    pathToClaudeCodeExecutable: claudePath,
     allowedTools: ['Bash', 'WebFetch', 'Read'],
     permissionMode: 'acceptEdits',
   });
@@ -171,9 +208,10 @@ async function expireSession(): Promise<void> {
       .join('\n');
 
     try {
+      const claudePath = findClaudeExecutable();
       const result = await unstable_v2_prompt(
         `以下の会話を3文で要約してください。重要な決定事項、作成した成果物、未完了タスクを含めてください。\n\n${messagesText}`,
-        { model: 'claude-sonnet-4-6' },
+        { model: 'claude-sonnet-4-6', ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}) },
       );
 
       const summary = (result.subtype === 'success' && result.result) ? result.result : '[要約生成失敗]';
