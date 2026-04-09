@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-import { API_BASE } from '../../../config';
+import { API_BASE, getApiBase } from '../../../config';
 
 declare global {
   interface Window {
@@ -96,7 +96,7 @@ export function Settings({ onAssistantNameChange }: SettingsProps): React.JSX.El
         <h2 style={{ fontSize: 18, marginBottom: 12 }}>サーバー接続</h2>
         <div style={{ padding: 16, borderRadius: 8, background: '#f8f9fa' }}>
           <p>Workers API: <strong>{health}</strong></p>
-          <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>エンドポイント: {API_BASE}</p>
+          <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>エンドポイント: {getApiBase()}</p>
         </div>
       </section>
 
