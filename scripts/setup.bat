@@ -72,9 +72,26 @@ call %WRANGLER% secret put THREADS_APP_SECRET
 
 echo.
 echo   暗号化キーを自動生成して設定します...
-for /f %%i in ('node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"') do set ENC_KEY=%%i
-echo !ENC_KEY! | call %WRANGLER% secret put ENCRYPTION_KEY
-echo   ENCRYPTION_KEY: 自動生成済み
+call %WRANGLER% secret list 2>nul | findstr /C:"ENCRYPTION_KEY" >nul 2>&1
+if !errorlevel! equ 0 (
+  echo   ⚠ ENCRYPTION_KEY は既に設定済みです。スキップします。
+  echo     （再生成すると既存の暗号化トークンが無効になります）
+) else (
+  for /f %%i in ('node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"') do set ENC_KEY=%%i
+  echo !ENC_KEY! | call %WRANGLER% secret put ENCRYPTION_KEY
+  echo   ENCRYPTION_KEY: 自動生成済み
+)
+
+echo.
+echo   Webhook検証トークンを自動生成して設定します...
+call %WRANGLER% secret list 2>nul | findstr /C:"WEBHOOK_VERIFY_TOKEN" >nul 2>&1
+if !errorlevel! equ 0 (
+  echo   ⚠ WEBHOOK_VERIFY_TOKEN は既に設定済みです。スキップします。
+) else (
+  for /f %%i in ('node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"') do set WH_TOKEN=%%i
+  echo !WH_TOKEN! | call %WRANGLER% secret put WEBHOOK_VERIFY_TOKEN
+  echo   WEBHOOK_VERIFY_TOKEN: 自動生成済み
+)
 
 :: マイグレーション
 echo.

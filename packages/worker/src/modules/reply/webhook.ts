@@ -16,8 +16,7 @@ webhookRoutes.get('/', async (c) => {
   const token = c.req.query('hub.verify_token');
   const challenge = c.req.query('hub.challenge');
 
-  // verify_token は専用の環境変数で管理（ENCRYPTION_KEYとは分離）
-  const verifyToken = c.env.WEBHOOK_VERIFY_TOKEN || 'urads-webhook-verify';
+  const verifyToken = c.env.WEBHOOK_VERIFY_TOKEN;
 
   if (mode === 'subscribe' && token === verifyToken) {
     console.log('Webhook verified');

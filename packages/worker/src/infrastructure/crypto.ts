@@ -31,6 +31,9 @@ async function deriveKey(keyString: string): Promise<CryptoKey> {
  * @returns "base64(iv).base64(ciphertext)" 形式
  */
 export async function encryptField(encryptionKey: string, plaintext: string): Promise<string> {
+  if (!encryptionKey) {
+    throw new Error('ENCRYPTION_KEY が設定されていません。wrangler secret put ENCRYPTION_KEY を実行してください。');
+  }
   const key = await deriveKey(encryptionKey);
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const encoder = new TextEncoder();
@@ -66,6 +69,9 @@ export async function decryptFieldSafe(encryptionKey: string, value: string): Pr
 }
 
 export async function decryptField(encryptionKey: string, encrypted: string): Promise<string> {
+  if (!encryptionKey) {
+    throw new Error('ENCRYPTION_KEY が設定されていません。wrangler secret put ENCRYPTION_KEY を実行してください。');
+  }
   const parts = encrypted.split('.');
   if (parts.length !== 2) {
     throw new Error('Invalid encrypted format');

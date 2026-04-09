@@ -5,5 +5,5 @@ export interface Env {
   THREADS_APP_ID: string;
   THREADS_APP_SECRET: string;
   THREADS_REDIRECT_URI: string;
-  WEBHOOK_VERIFY_TOKEN?: string;
+  WEBHOOK_VERIFY_TOKEN: string;
 }

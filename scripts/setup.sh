@@ -90,9 +90,24 @@ $WRANGLER secret put THREADS_APP_SECRET
 
 echo ""
 echo "  暗号化キーを自動生成して設定します..."
-ENC_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-printf '%s' "$ENC_KEY" | $WRANGLER secret put ENCRYPTION_KEY
-echo "  ENCRYPTION_KEY: 自動生成済み"
+if $WRANGLER secret list 2>/dev/null | grep -q ENCRYPTION_KEY; then
+  echo "  ⚠ ENCRYPTION_KEY は既に設定済みです。スキップします。"
+  echo "    （再生成すると既存の暗号化トークンが無効になります）"
+else
+  ENC_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+  printf '%s' "$ENC_KEY" | $WRANGLER secret put ENCRYPTION_KEY
+  echo "  ENCRYPTION_KEY: 自動生成済み"
+fi
+
+echo ""
+echo "  Webhook検証トークンを自動生成して設定します..."
+if $WRANGLER secret list 2>/dev/null | grep -q WEBHOOK_VERIFY_TOKEN; then
+  echo "  ⚠ WEBHOOK_VERIFY_TOKEN は既に設定済みです。スキップします。"
+else
+  WH_TOKEN=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+  printf '%s' "$WH_TOKEN" | $WRANGLER secret put WEBHOOK_VERIFY_TOKEN
+  echo "  WEBHOOK_VERIFY_TOKEN: 自動生成済み"
+fi
 
 # マイグレーション
 echo ""

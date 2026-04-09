@@ -27,8 +27,21 @@ app.use('/research/*', licenseMiddleware);
 app.use('/ai/*', licenseMiddleware);
 app.use('/chat/*', licenseMiddleware);
 
-// Health check
+// Health check（バリデーション前に配置 — 接続テストは常に通す）
 app.get('/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
+
+// 必須環境変数バリデーション（/health 以外の全エンドポイントに適用）
+app.use('*', async (c, next) => {
+  if (!c.env.THREADS_APP_ID || c.env.THREADS_APP_ID === 'YOUR_THREADS_APP_ID') {
+    console.error('THREADS_APP_ID が未設定またはプレースホルダーです。scripts/setup.sh を実行してください。');
+    return c.json({ code: 'CONFIG_ERROR', message: 'Server configuration incomplete' }, 500);
+  }
+  if (!c.env.ENCRYPTION_KEY) {
+    console.error('ENCRYPTION_KEY が未設定です。wrangler secret put ENCRYPTION_KEY を実行してください。');
+    return c.json({ code: 'CONFIG_ERROR', message: 'Server configuration incomplete' }, 500);
+  }
+  await next();
+});
 
 // Module routes
 app.route('/license', authRoutes);
