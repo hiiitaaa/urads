@@ -53,33 +53,47 @@ function createWindow(): void {
 // 3. Workers にコードを送ってトークン交換+保存
 ipcMain.handle('threads:auth', async () => {
   // 1. 認可URL取得
-  const urlRes = await net.fetch(`${getApiBase()}/license/auth-url`);
-  const { url: authUrl, redirect_uri: redirectUri } = await urlRes.json() as {
+  const apiBase = getApiBase();
+  log.info(`[threads:auth] Step 1: Fetching auth URL from ${apiBase}/license/auth-url`);
+  const urlRes = await net.fetch(`${apiBase}/license/auth-url`);
+  log.info(`[threads:auth] Step 1 response: ${urlRes.status} ${urlRes.statusText}`);
+  const authData = await urlRes.json() as {
     url: string; state: string; redirect_uri: string;
   };
+  log.info(`[threads:auth] Step 1 data: redirect_uri=${authData.redirect_uri}, hasUrl=${!!authData.url}`);
 
   // 2. 認可コード取得
-  const code = await openAuthWindow(authUrl, redirectUri);
+  log.info('[threads:auth] Step 2: Opening auth window');
+  const code = await openAuthWindow(authData.url, authData.redirect_uri);
+  log.info(`[threads:auth] Step 2: Got auth code (length=${code.length})`);
 
   // 3. Workers でトークン交換+D1保存
-  const exchangeRes = await net.fetch(`${getApiBase()}/license/exchange`, {
+  log.info('[threads:auth] Step 3: Exchanging code for token');
+  const exchangeRes = await net.fetch(`${apiBase}/license/exchange`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
   });
+  log.info(`[threads:auth] Step 3 response: ${exchangeRes.status} ${exchangeRes.statusText}`);
 
   if (!exchangeRes.ok) {
     const err = await exchangeRes.json() as { error: string };
+    log.error(`[threads:auth] Exchange failed: ${JSON.stringify(err)}`);
     throw new Error(err.error);
   }
 
-  return exchangeRes.json();
+  const result = await exchangeRes.json();
+  log.info('[threads:auth] Auth completed successfully');
+  return result;
 });
 
 // IPC: 保存済みアカウント一覧を取得
 ipcMain.handle('threads:getAccounts', async () => {
+  log.info(`[threads:getAccounts] Fetching from ${getApiBase()}/accounts`);
   const response = await net.fetch(`${getApiBase()}/accounts`);
+  log.info(`[threads:getAccounts] Response: ${response.status}`);
   const data = await response.json() as { accounts: unknown[] };
+  log.info(`[threads:getAccounts] Got ${data.accounts?.length ?? 0} accounts`);
   return data.accounts;
 });
 
@@ -394,13 +408,17 @@ function validateUrl(url: string): void {
 }
 
 ipcMain.handle('config:testConnection', async (_event, url: string) => {
+  log.info(`[config:testConnection] Testing: ${url}`);
   try {
     validateUrl(url);
     const res = await net.fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+    log.info(`[config:testConnection] Response: ${res.status}`);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const data = await res.json() as { status: string; timestamp: number };
+    log.info(`[config:testConnection] OK: ${JSON.stringify(data)}`);
     return { ok: true, timestamp: data.timestamp };
   } catch (err) {
+    log.error(`[config:testConnection] Failed: ${err}`);
     return { ok: false, error: err instanceof Error ? err.message : 'タイムアウト' };
   }
 });
