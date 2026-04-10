@@ -5,6 +5,9 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { app } from 'electron';
+import { createLogger } from '../../unified-logger';
+
+const log = createLogger('config');
 
 interface AppConfig {
   workersUrl: string | null;
@@ -43,6 +46,7 @@ export function getWorkersUrl(): string {
 }
 
 export function setWorkersUrl(url: string): void {
+  log.info(`Workers URL変更: ${url}`);
   const config = loadConfig();
   config.workersUrl = url;
   saveConfig(config);
@@ -53,6 +57,7 @@ export function isSetupCompleted(): boolean {
 }
 
 export function completeSetup(): void {
+  log.info('セットアップ完了');
   const config = loadConfig();
   config.setupCompleted = true;
   saveConfig(config);

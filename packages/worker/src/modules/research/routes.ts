@@ -303,7 +303,7 @@ researchRoutes.get('/benchmarks/:id/posts', async (c) => {
 
   let query = 'SELECT * FROM scraped_posts WHERE benchmark_id = ?';
   if (buzzOnly) query += ' AND is_buzz = 1';
-  query += ' ORDER BY likes DESC, scraped_at DESC LIMIT ?';
+  query += ' ORDER BY posted_at DESC, scraped_at DESC LIMIT ?';
 
   const { results } = await c.env.DB.prepare(query).bind(benchmarkId, limit).all();
   return c.json({ posts: results, total: results.length });
@@ -367,7 +367,11 @@ researchRoutes.get('/settings', async (c) => {
   ).bind(licenseId).first();
 
   if (!settings) {
-    return c.json({ buzz_likes: 1000, buzz_replies: 100, buzz_reposts: 50, retention_days: 90, max_pages: 2 });
+    return c.json({
+      buzz_likes: 1000, buzz_replies: 100, buzz_reposts: 50, retention_days: 90, max_pages: 2,
+      schedule_enabled: 0, schedule_hour: 9, schedule_minute: 0,
+      schedule_types: '["trending"]', search_min_likes: 0, search_max_results: 50,
+    });
   }
   return c.json(settings);
 });
@@ -384,25 +388,62 @@ researchRoutes.put('/settings', async (c) => {
   const retentionDays = Number(body.retention_days ?? 90);
   const maxPages = Number(body.max_pages ?? 2);
 
+  // 新フィールド
+  const scheduleEnabled = body.schedule_enabled ? 1 : 0;
+  const scheduleHour = Math.floor(Number(body.schedule_hour ?? 9));
+  const scheduleMinute = Math.floor(Number(body.schedule_minute ?? 0));
+  const searchMinLikes = Math.floor(Number(body.search_min_likes ?? 0));
+  const searchMaxResults = Math.floor(Number(body.search_max_results ?? 50));
+
+  // schedule_types: JSON文字列バリデーション
+  const validScheduleTypes = ['trending', 'keyword', 'benchmark', 'competitor'];
+  let scheduleTypes = '["trending"]';
+  if (body.schedule_types !== undefined) {
+    try {
+      const parsed = typeof body.schedule_types === 'string'
+        ? JSON.parse(body.schedule_types)
+        : body.schedule_types;
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        return c.json({ error: 'schedule_types は有効なタイプの配列が必要です' }, 400);
+      }
+      const invalid = parsed.filter((t: string) => !validScheduleTypes.includes(t));
+      if (invalid.length > 0) {
+        return c.json({ error: `schedule_types に無効な値があります: ${invalid.join(', ')}（有効: ${validScheduleTypes.join(', ')}）` }, 400);
+      }
+      scheduleTypes = JSON.stringify(parsed);
+    } catch {
+      return c.json({ error: 'schedule_types のJSON解析に失敗しました' }, 400);
+    }
+  }
+
   const errors: string[] = [];
   if (isNaN(buzzLikes) || buzzLikes < 0 || buzzLikes > 100000) errors.push('buzz_likes: 0〜100000');
   if (isNaN(buzzReplies) || buzzReplies < 0 || buzzReplies > 10000) errors.push('buzz_replies: 0〜10000');
   if (isNaN(buzzReposts) || buzzReposts < 0 || buzzReposts > 10000) errors.push('buzz_reposts: 0〜10000');
   if (isNaN(retentionDays) || retentionDays < 7 || retentionDays > 365) errors.push('retention_days: 7〜365');
   if (isNaN(maxPages) || maxPages < 1 || maxPages > 4) errors.push('max_pages: 1〜4');
+  if (isNaN(scheduleHour) || scheduleHour < 0 || scheduleHour > 23) errors.push('schedule_hour: 0〜23');
+  if (isNaN(scheduleMinute) || scheduleMinute < 0 || scheduleMinute > 59) errors.push('schedule_minute: 0〜59');
+  if (isNaN(searchMinLikes) || searchMinLikes < 0 || searchMinLikes > 100000) errors.push('search_min_likes: 0〜100000');
+  if (isNaN(searchMaxResults) || searchMaxResults < 10 || searchMaxResults > 200) errors.push('search_max_results: 10〜200');
 
   if (errors.length > 0) {
     return c.json({ error: `設定値が範囲外です: ${errors.join(', ')}` }, 400);
   }
 
   await c.env.DB.prepare(
-    `INSERT INTO research_settings (license_id, buzz_likes, buzz_replies, buzz_reposts, retention_days, max_pages, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO research_settings (license_id, buzz_likes, buzz_replies, buzz_reposts, retention_days, max_pages, schedule_enabled, schedule_hour, schedule_minute, schedule_types, search_min_likes, search_max_results, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(license_id) DO UPDATE SET
-       buzz_likes = ?, buzz_replies = ?, buzz_reposts = ?, retention_days = ?, max_pages = ?, updated_at = ?`
+       buzz_likes = ?, buzz_replies = ?, buzz_reposts = ?, retention_days = ?, max_pages = ?,
+       schedule_enabled = ?, schedule_hour = ?, schedule_minute = ?, schedule_types = ?,
+       search_min_likes = ?, search_max_results = ?, updated_at = ?`
   ).bind(
-    licenseId, buzzLikes, buzzReplies, buzzReposts, retentionDays, maxPages, Date.now(),
-    buzzLikes, buzzReplies, buzzReposts, retentionDays, maxPages, Date.now(),
+    licenseId, buzzLikes, buzzReplies, buzzReposts, retentionDays, maxPages,
+    scheduleEnabled, scheduleHour, scheduleMinute, scheduleTypes, searchMinLikes, searchMaxResults, Date.now(),
+    buzzLikes, buzzReplies, buzzReposts, retentionDays, maxPages,
+    scheduleEnabled, scheduleHour, scheduleMinute, scheduleTypes,
+    searchMinLikes, searchMaxResults, Date.now(),
   ).run();
 
   return c.json({ updated: true });

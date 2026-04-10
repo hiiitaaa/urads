@@ -43,10 +43,29 @@ contextBridge.exposeInMainWorld('urads', {
   scraperSearch: (query: string) => ipcRenderer.invoke('scraper:search', query),
   scraperBenchmark: (handle: string, benchmarkId: string) => ipcRenderer.invoke('scraper:benchmark', handle, benchmarkId),
 
+  // 外部URL
+  openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+
   // アプリ設定（セットアップウィザード）
   configGetApiBase: () => ipcRenderer.invoke('config:getApiBase'),
   configSetApiBase: (url: string) => ipcRenderer.invoke('config:setApiBase', url),
   configIsSetupCompleted: () => ipcRenderer.invoke('config:isSetupCompleted'),
   configCompleteSetup: () => ipcRenderer.invoke('config:completeSetup'),
   configTestConnection: (url: string) => ipcRenderer.invoke('config:testConnection', url),
+
+  // 定時リサーチスケジューラー
+  researchGetSchedule: () => ipcRenderer.invoke('research:getSchedule'),
+  researchSetSchedule: (schedule: { enabled: boolean; hour: number; minute: number; types: string[] }) =>
+    ipcRenderer.invoke('research:setSchedule', schedule),
+
+  // ログシステム
+  getLogs: (filter?: { category?: string; level?: string; since?: number; limit?: number }) =>
+    ipcRenderer.invoke('logs:get', filter),
+  onLogEntry: (callback: (entry: unknown) => void) => {
+    const handler = (_event: unknown, entry: unknown) => callback(entry);
+    ipcRenderer.on('logs:push', handler as (...args: unknown[]) => void);
+    return () => { ipcRenderer.removeListener('logs:push', handler as (...args: unknown[]) => void); };
+  },
+  getLogFilePath: () => ipcRenderer.invoke('logs:getFilePath'),
+  logAction: (action: string, detail?: unknown) => ipcRenderer.invoke('logs:logAction', action, detail),
 });

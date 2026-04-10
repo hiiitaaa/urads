@@ -52,6 +52,11 @@ interface TrendingPost {
 
 export function Research(): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('benchmarks');
+  const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['benchmarks']));
+  const selectTab = (t: Tab) => {
+    setMountedTabs((prev) => new Set([...prev, t]));
+    setTab(t);
+  };
   const [benchmarks, setBenchmarks] = useState<Benchmark[]>([]);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [newHandle, setNewHandle] = useState('');
@@ -115,9 +120,13 @@ export function Research(): React.JSX.Element {
 
       if (result.ok) {
         const postCount = result.posts?.length || 0;
-        setStatus(`完了: ${postCount}件の投稿を取得（Playwright、APIリミット未消費）`);
-        // scraped_postsに保存+benchmarks更新はfeed-scraper.ts内で実行済み
-        if (selectedBenchmark === id) loadPosts(id);
+        if (postCount > 0) {
+          setStatus(`完了: ${postCount}件の投稿を取得`);
+          loadPosts(id); // 自動で投稿一覧を表示
+        } else {
+          setStatus(`取得0件: ページの読み込みに失敗したか、投稿データの形式が変更された可能性があります。アクティビティログで詳細を確認してください。`);
+        }
+        loadBenchmarks();
       } else {
         setStatus(`失敗: ${result.error}`);
       }
@@ -184,7 +193,7 @@ export function Research(): React.JSX.Element {
       {/* タブ */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
         {([['benchmarks', 'ベンチマーク'], ['search', 'キーワード検索'], ['trending', 'トレンド'], ['settings', '設定']] as [Tab, string][]).map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)}
+          <button key={id} onClick={() => selectTab(id)}
             style={{ padding: '8px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
               background: tab === id ? '#1a1a2e' : '#eee', color: tab === id ? '#fff' : '#333', fontSize: 14 }}>
             {label}
@@ -193,7 +202,7 @@ export function Research(): React.JSX.Element {
       </div>
 
       {/* ベンチマークタブ */}
-      {tab === 'benchmarks' && (
+      <div style={{ display: tab === 'benchmarks' ? 'block' : 'none' }}>
         <>
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
             <input value={newHandle} onChange={(e) => setNewHandle(e.target.value)} placeholder="@handle"
@@ -212,7 +221,13 @@ export function Research(): React.JSX.Element {
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
                 onClick={() => loadPosts(bm.id)}>
                 <div>
-                  <span style={{ fontWeight: 'bold' }}>@{bm.threads_handle}</span>
+                  <span
+                    style={{ fontWeight: 'bold', fontSize: 13, cursor: 'pointer', color: '#1a1a2e' }}
+                    onClick={(e) => { e.stopPropagation(); (window.urads as any).openExternal(`https://www.threads.net/@${bm.threads_handle}`); }}
+                    title="Threadsプロフィールを開く"
+                  >
+                    @{bm.threads_handle}
+                  </span>
                   {bm.display_name && <span style={{ color: '#666', marginLeft: 8 }}>{bm.display_name}</span>}
                   {bm.follower_count && <span style={{ color: '#999', marginLeft: 8, fontSize: 12 }}>{bm.follower_count.toLocaleString()} followers</span>}
                   <span style={{ marginLeft: 8, fontSize: 11, padding: '1px 6px', borderRadius: 3,
@@ -260,10 +275,11 @@ export function Research(): React.JSX.Element {
             </div>
           )}
         </>
-      )}
+      </div>
 
       {/* キーワード検索タブ */}
-      {tab === 'search' && (
+      {mountedTabs.has('search') && (
+      <div style={{ display: tab === 'search' ? 'block' : 'none' }}>
         <>
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
             <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="キーワードを入力（2文字以上）"
@@ -276,7 +292,12 @@ export function Research(): React.JSX.Element {
           </div>
           <p style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>Playwrightで検索（API消費なし、要ログイン）</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {searchResults.map((p, i) => {
+            {[...searchResults].sort((a, b) => {
+              const sa = a as unknown as { likes?: number; replies?: number; reposts?: number };
+              const sb = b as unknown as { likes?: number; replies?: number; reposts?: number };
+              return ((sb.likes || 0) + (sb.replies || 0) * 5 + (sb.reposts || 0) * 4)
+                   - ((sa.likes || 0) + (sa.replies || 0) * 5 + (sa.reposts || 0) * 4);
+            }).map((p, i) => {
               const pr = p as unknown as { username?: string; content?: string; text?: string; likes?: number; replies?: number; reposts?: number };
               const score = (pr.likes || 0) * 1 + (pr.replies || 0) * 5 + (pr.reposts || 0) * 4;
               return (
@@ -287,7 +308,38 @@ export function Research(): React.JSX.Element {
                 }}>
                   {score > 100 && <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 3, background: '#f39c12', color: '#fff', marginBottom: 4, display: 'inline-block' }}>スコア: {score}</span>}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontWeight: 'bold', fontSize: 13 }}>@{pr.username || '不明'}</span>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <span
+                        style={{ fontWeight: 'bold', fontSize: 13, cursor: 'pointer', color: '#1a1a2e' }}
+                        onClick={(e) => { e.stopPropagation(); (window.urads as any).openExternal(`https://www.threads.net/@${pr.username || ''}`); }}
+                        title="Threadsプロフィールを開く"
+                      >
+                        @{pr.username || '不明'}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const handle = pr.username;
+                          if (!handle) return;
+                          fetch(`${API_BASE}/research/benchmarks`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ threads_handle: handle }),
+                          }).then(() => {
+                            setStatus(`@${handle} をベンチマークに追加しました`);
+                          }).catch(() => {
+                            setStatus('追加に失敗しました');
+                          });
+                        }}
+                        style={{
+                          padding: '2px 8px', borderRadius: 4, border: '1px solid #3498db',
+                          background: 'transparent', color: '#3498db', fontSize: 11, cursor: 'pointer',
+                          marginLeft: 8,
+                        }}
+                      >
+                        + ベンチマーク
+                      </button>
+                    </div>
                     <div style={{ display: 'flex', gap: 12, fontSize: 12, color: '#666' }}>
                       <span>❤ {pr.likes || 0}</span>
                       <span>💬 {pr.replies || 0}</span>
@@ -300,13 +352,22 @@ export function Research(): React.JSX.Element {
             })}
           </div>
         </>
+      </div>
       )}
 
       {/* トレンドタブ */}
-      {tab === 'trending' && <TrendingTab />}
+      {mountedTabs.has('trending') && (
+      <div style={{ display: tab === 'trending' ? 'block' : 'none' }}>
+        <TrendingTab />
+      </div>
+      )}
 
       {/* 設定タブ */}
-      {tab === 'settings' && <ResearchSettings />}
+      {mountedTabs.has('settings') && (
+      <div style={{ display: tab === 'settings' ? 'block' : 'none' }}>
+        <ResearchSettings />
+      </div>
+      )}
 
       {status && <p style={{ marginTop: 12, fontSize: 14, color: status.includes('失敗') ? '#e74c3c' : '#27ae60' }}>{status}</p>}
     </div>
@@ -314,11 +375,15 @@ export function Research(): React.JSX.Element {
 }
 
 function ResearchSettings(): React.JSX.Element {
-  const [settings, setSettings] = useState({ buzz_likes: 1000, buzz_replies: 100, buzz_reposts: 50, retention_days: 90, max_pages: 2 });
+  const [settings, setSettings] = useState({ buzz_likes: 1000, buzz_replies: 100, buzz_reposts: 50, retention_days: 90, max_pages: 2, search_min_likes: 0, search_max_results: 50 });
   const [saved, setSaved] = useState(false);
+  const [schedule, setSchedule] = useState({ enabled: false, hour: 9, minute: 0, types: ['trending'] as string[] });
 
   useEffect(() => {
     fetch(`${API_BASE}/research/settings`).then((r) => r.json()).then(setSettings).catch(() => {});
+    (window.urads as any).researchGetSchedule?.().then((s: any) => {
+      if (s) setSchedule(s);
+    }).catch(() => {});
   }, []);
 
   const handleSave = async () => {
@@ -355,11 +420,83 @@ function ResearchSettings(): React.JSX.Element {
           onChange={(e) => setSettings({ ...settings, max_pages: Number(e.target.value) })}
           style={{ marginLeft: 8, width: 80, padding: 6, borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }} />
       </div>
+
+      <h3 style={{ fontSize: 16, marginTop: 20, marginBottom: 12 }}>検索フィルタ</h3>
+      <div style={{ marginBottom: 8 }}>
+        <label style={{ fontSize: 13, color: '#666' }}>最大表示件数</label>
+        <input type="number" value={settings.search_max_results} min={10} max={200}
+          onChange={(e) => setSettings({ ...settings, search_max_results: Number(e.target.value) })}
+          style={{ marginLeft: 8, width: 80, padding: 6, borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }} />
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 13, color: '#666' }}>最低いいね数（下限フィルタ）</label>
+        <input type="number" value={settings.search_min_likes} min={0} max={100000}
+          onChange={(e) => setSettings({ ...settings, search_min_likes: Number(e.target.value) })}
+          style={{ marginLeft: 8, width: 80, padding: 6, borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }} />
+        <p style={{ fontSize: 11, color: '#999', marginTop: 4 }}>0 = フィルタなし。設定するとエンゲージメントの低い投稿を除外します</p>
+      </div>
+
       <button onClick={handleSave}
         style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: '#1a1a2e', color: '#fff', fontSize: 14, cursor: 'pointer' }}>
         保存
       </button>
       {saved && <span style={{ marginLeft: 12, color: '#27ae60', fontSize: 14 }}>保存しました</span>}
+
+      <h3 style={{ fontSize: 16, marginTop: 28, marginBottom: 12 }}>定時リサーチ</h3>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer', fontSize: 14 }}>
+        <input type="checkbox" checked={schedule.enabled}
+          onChange={(e) => {
+            const next = { ...schedule, enabled: e.target.checked };
+            setSchedule(next);
+            (window.urads as any).researchSetSchedule(next);
+          }}
+          style={{ width: 18, height: 18 }} />
+        毎日自動でリサーチを実行
+      </label>
+      {schedule.enabled && (
+        <div style={{ padding: 12, background: '#f8f9fa', borderRadius: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <label style={{ fontSize: 13 }}>実行時刻:</label>
+            <input type="number" min={0} max={23} value={schedule.hour}
+              onChange={(e) => {
+                const next = { ...schedule, hour: Number(e.target.value) };
+                setSchedule(next);
+                (window.urads as any).researchSetSchedule(next);
+              }}
+              style={{ width: 50, padding: 4, borderRadius: 4, border: '1px solid #ddd', fontSize: 14, textAlign: 'center' as const }} />
+            <span>:</span>
+            <input type="number" min={0} max={59} value={schedule.minute}
+              onChange={(e) => {
+                const next = { ...schedule, minute: Number(e.target.value) };
+                setSchedule(next);
+                (window.urads as any).researchSetSchedule(next);
+              }}
+              style={{ width: 50, padding: 4, borderRadius: 4, border: '1px solid #ddd', fontSize: 14, textAlign: 'center' as const }} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+            <label style={{ fontSize: 13, color: '#666' }}>実行内容:</label>
+            {[['trending', 'トレンド取得'], ['insights', 'Insights更新']].map(([val, label]) => (
+              <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox"
+                  checked={schedule.types.includes(val)}
+                  onChange={(e) => {
+                    const types = e.target.checked
+                      ? [...schedule.types, val]
+                      : schedule.types.filter(t => t !== val);
+                    const next = { ...schedule, types };
+                    setSchedule(next);
+                    (window.urads as any).researchSetSchedule(next);
+                  }}
+                  style={{ width: 16, height: 16 }} />
+                {label}
+              </label>
+            ))}
+          </div>
+          <p style={{ fontSize: 11, color: '#999', marginTop: 8 }}>
+            アプリ起動中のみ実行されます。実行時間には1〜5分のランダムな遅延が入ります。
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -470,7 +607,13 @@ function TrendingTab(): React.JSX.Element {
                     </span>
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontWeight: 'bold', fontSize: 13 }}>@{p.username}</span>
+                    <span
+                      style={{ fontWeight: 'bold', fontSize: 13, cursor: 'pointer', color: '#1a1a2e' }}
+                      onClick={(e) => { e.stopPropagation(); (window.urads as any).openExternal(`https://www.threads.net/@${p.username}`); }}
+                      title="Threadsプロフィールを開く"
+                    >
+                      @{p.username}
+                    </span>
                     <div style={{ display: 'flex', gap: 12, fontSize: 12, color: '#666' }}>
                       <span>❤ {p.likes}</span>
                       <span>💬 {p.replies}</span>

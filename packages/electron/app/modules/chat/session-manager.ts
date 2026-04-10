@@ -14,6 +14,9 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 
 import { getApiBase } from '../config/api-base';
+import { createLogger } from '../../unified-logger';
+
+const log = createLogger('chat');
 
 /**
  * Claude Code CLIのパスを検出
@@ -133,12 +136,15 @@ async function buildSystemPrompt(): Promise<string> {
  * セッション作成（コンテキスト注入付き）
  */
 async function createSessionWithContext(): Promise<SDKSession> {
+  log.info('セッション作成開始');
   const systemPrompt = await buildSystemPrompt();
 
   const claudePath = findClaudeExecutable();
   if (!claudePath) {
+    log.error('Claude Code CLIが見つかりません');
     throw new Error('Claude Codeがインストールされていません。https://claude.ai/code からインストールしてください。');
   }
+  log.info(`Claude CLI: ${claudePath}`);
 
   const session = unstable_v2_createSession({
     model: 'claude-sonnet-4-6',
@@ -199,6 +205,7 @@ async function ensureSession(): Promise<SDKSession> {
  */
 async function expireSession(): Promise<void> {
   if (!currentSessionId) return;
+  log.info(`セッション期限切れ: ${currentSessionId}`);
 
   const messages = sessionStore.getActiveMessages();
   if (messages.length > 0) {
@@ -244,6 +251,7 @@ function resetExpiryTimer(): void {
  */
 export async function processMessage(payload: { message?: string; skill?: string }): Promise<{ text: string; error?: string }> {
   try {
+    log.info(`メッセージ処理: ${payload.skill ? `スキル=${payload.skill}` : `テキスト=${(payload.message || '').slice(0, 50)}`}`);
     const session = await ensureSession();
     let prompt: string;
 

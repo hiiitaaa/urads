@@ -22,7 +22,6 @@ const PAGES: { id: Page; label: string }[] = [
   { id: 'replies', label: 'リプライルール' },
   { id: 'reply-logs', label: 'リプライ履歴' },
   { id: 'research', label: 'リサーチ' },
-  { id: 'chat-logs', label: 'ツールログ' },
   { id: 'settings', label: '設定' },
 ];
 
@@ -82,7 +81,7 @@ export function App(): React.JSX.Element {
       case 'reply-logs': return <ReplyLogs />;
       case 'research': return <Research />;
       case 'chat-logs': return <LogViewer />;
-      case 'settings': return <Settings onAssistantNameChange={setAssistantName} />;
+      case 'settings': return <Settings onAssistantNameChange={setAssistantName} onOpenLogs={() => setPage('chat-logs')} />;
     }
   };
 
@@ -114,7 +113,7 @@ export function App(): React.JSX.Element {
         {PAGES.map((p) => (
           <div
             key={p.id}
-            onClick={() => { setPage(p.id); setPreselectedPostId(null); }}
+            onClick={() => { setPage(p.id); setPreselectedPostId(null); (window as any).urads?.logAction?.(`ページ遷移: ${p.label}`, { page: p.id }); }}
             style={{
               padding: '10px 12px', borderRadius: 6, cursor: 'pointer',
               background: page === p.id ? '#16213e' : 'transparent',

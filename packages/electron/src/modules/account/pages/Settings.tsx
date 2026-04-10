@@ -29,9 +29,10 @@ interface SavedAccount {
 
 interface SettingsProps {
   onAssistantNameChange?: (name: string) => void;
+  onOpenLogs?: () => void;
 }
 
-export function Settings({ onAssistantNameChange }: SettingsProps): React.JSX.Element {
+export function Settings({ onAssistantNameChange, onOpenLogs }: SettingsProps): React.JSX.Element {
   const [health, setHealth] = useState<string>('確認中...');
   const [accounts, setAccounts] = useState<SavedAccount[]>([]);
   const [authStatus, setAuthStatus] = useState<string | null>(null);
@@ -167,6 +168,24 @@ export function Settings({ onAssistantNameChange }: SettingsProps): React.JSX.El
       </section>
 
       <AssistantSettings onNameChange={onAssistantNameChange} />
+
+      {onOpenLogs && (
+        <section style={{ marginBottom: 32 }}>
+          <h2 style={{ fontSize: 18, marginBottom: 12 }}>開発者ツール</h2>
+          <button
+            onClick={onOpenLogs}
+            style={{
+              padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd',
+              background: '#f8f9fa', fontSize: 13, cursor: 'pointer', color: '#666',
+            }}
+          >
+            アクティビティログを表示
+          </button>
+          <p style={{ fontSize: 12, color: '#999', marginTop: 6 }}>
+            API通信、スクレイピング、エラーなどの詳細ログを確認できます
+          </p>
+        </section>
+      )}
     </div>
   );
 }
