@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('urads', {
     ipcRenderer.invoke('insights:refresh', handle, accountId),
 
   // スクレイパー
+  scraperStatus: () => ipcRenderer.invoke('scraper:status'),
   scraperLogin: () => ipcRenderer.invoke('scraper:login'),
   scraperTrending: () => ipcRenderer.invoke('scraper:trending'),
   scraperSearch: (query: string) => ipcRenderer.invoke('scraper:search', query),

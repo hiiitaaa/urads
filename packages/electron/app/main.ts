@@ -18,6 +18,7 @@ import { getActiveMessages } from './modules/chat/session-store';
 
 const chatQueue = new MessageQueue(processMessage);
 import { scrapeTrending, scrapeBenchmark, scrapeSearch, scrapeOwnInsights, openLoginBrowser } from './modules/scraper/feed-scraper';
+import { getScraperUserId, isAllowedUserId, saveAllowedUserId, refreshSession } from './modules/scraper/browser';
 import { execFile, type ChildProcess } from 'child_process';
 import { getApiBase } from './modules/config/api-base';
 import { setWorkersUrl, isSetupCompleted, completeSetup } from './modules/config/app-config-store';
@@ -276,18 +277,88 @@ handleWithLog('media:delete', async (_event, key: unknown) => {
 // --- IPC: スクレイパー ---
 let scrapeHistory: number[] = [];
 let scraperBusy = false;
-let scraperBusyTask = ''; // 何が実行中かの表示用
+let scraperBusyTask = '';
+let scraperSessionExpired = false;
 const scraperLog = createLogger('scraper');
 
 function scraperBusyError(): { ok: false; error: string } {
   return { ok: false, error: `${scraperBusyTask || 'スクレイプ'}が実行中です。完了を待ってください。` };
 }
 
+/**
+ * 許可されたアカウントでスクレイパーがログインしているか検証
+ * ローカル許可リストで照合（オフラインでも動作）
+ */
+function verifyScraperAccount(): { ok: true } | { ok: false; error: string } {
+  if (scraperSessionExpired) {
+    return { ok: false, error: 'Cookie期限切れ。設定→リサーチ用ログインから再ログインしてください。' };
+  }
+
+  const scraperUserId = getScraperUserId();
+  if (!scraperUserId) {
+    return { ok: false, error: 'スクレイパー未ログイン。設定→リサーチ用ログインからログインしてください。' };
+  }
+
+  if (!isAllowedUserId(scraperUserId)) {
+    return { ok: false, error: `スクレイパーのアカウント(ID:${scraperUserId})は許可されていません。設定→リサーチ用ログインから連携アカウントでログインしてください。` };
+  }
+
+  return { ok: true };
+}
+
+// スクレイパーのログイン状態を返す
+handleWithLog('scraper:status', async () => {
+  const scraperUserId = getScraperUserId();
+  if (!scraperUserId) return { loggedIn: false, userId: null, handle: null, isLinkedAccount: false, sessionExpired: scraperSessionExpired };
+
+  // 連携アカウントと照合してハンドル名を返す
+  try {
+    const res = await loggedFetch(`${getApiBase()}/accounts`);
+    const data = await res.json() as { accounts: Array<{ threads_user_id: string; threads_handle: string }> };
+    const match = (data.accounts || []).find(a => a.threads_user_id === scraperUserId);
+    return { loggedIn: true, userId: scraperUserId, handle: match?.threads_handle || null, isLinkedAccount: !!match, sessionExpired: scraperSessionExpired };
+  } catch {
+    return { loggedIn: true, userId: scraperUserId, handle: null, isLinkedAccount: isAllowedUserId(scraperUserId), sessionExpired: scraperSessionExpired };
+  }
+});
+
 handleWithLog('scraper:login', async () => {
   if (scraperBusy) return scraperBusyError();
   scraperBusy = true; scraperBusyTask = 'Threadsログイン';
   try {
-    return await openLoginBrowser();
+    const result = await openLoginBrowser();
+    if (!result.ok) return result;
+
+    // ログインしたアカウントのuser_idを取得
+    const userId = result.userId;
+
+    // 連携アカウントと照合
+    let warning: string | undefined;
+    try {
+      const res = await loggedFetch(`${getApiBase()}/accounts`);
+      const data = await res.json() as { accounts: Array<{ threads_user_id: string; threads_handle: string }> };
+      const accounts = data.accounts || [];
+      const match = accounts.find(a => a.threads_user_id === userId);
+
+      if (match) {
+        // 連携アカウントと一致 → 許可リストに追加
+        saveAllowedUserId(userId);
+      } else if (accounts.length > 0) {
+        // 不一致 → 警告
+        const handles = accounts.map(a => `@${a.threads_handle}`).join(', ');
+        warning = `ログインアカウント(ID:${userId})は連携アカウント(${handles})と異なります。連携アカウントでログインし直してください。`;
+        scraperLog.warn(`スクレイパーログイン: アカウント不一致 (user_id=${userId})`);
+      } else {
+        // 連携アカウントなし（初回セットアップ）→ そのまま許可
+        saveAllowedUserId(userId);
+      }
+    } catch {
+      // API接続失敗（初回セットアップ、オフライン）→ そのまま許可
+      saveAllowedUserId(userId);
+    }
+
+    scraperSessionExpired = false;
+    return { ok: true, userId, warning };
   } finally {
     scraperBusy = false; scraperBusyTask = '';
   }
@@ -295,6 +366,8 @@ handleWithLog('scraper:login', async () => {
 
 handleWithLog('scraper:benchmark', async (_event, handle: unknown, benchmarkId: unknown) => {
   if (scraperBusy) return scraperBusyError();
+  const verify = await verifyScraperAccount();
+  if (!verify.ok) return { ok: false, error: verify.error };
   scraperBusy = true; scraperBusyTask = 'ベンチマーク取得';
   try {
     return await scrapeBenchmark(handle as string, benchmarkId as string);
@@ -305,6 +378,8 @@ handleWithLog('scraper:benchmark', async (_event, handle: unknown, benchmarkId: 
 
 handleWithLog('insights:refresh', async (_event, handle: unknown, accountId: unknown) => {
   if (scraperBusy) return scraperBusyError();
+  const verify = await verifyScraperAccount();
+  if (!verify.ok) return { ok: false, error: verify.error };
   scraperBusy = true; scraperBusyTask = 'Insights更新';
   try {
     return await scrapeOwnInsights(handle as string, accountId as string);
@@ -399,6 +474,31 @@ function startResearchScheduler(): void {
             } finally {
               scraperBusy = false; scraperBusyTask = '';
             }
+          } else if (type === 'benchmark') {
+            // 全ベンチマークを日次スクレイプ
+            try {
+              const bmRes = await loggedFetch(`${getApiBase()}/research/benchmarks`);
+              const bmData = await bmRes.json() as { benchmarks: Array<{ id: string; threads_handle: string; status: string; last_scraped_at: number | null }> };
+              const benchmarks = (bmData.benchmarks || []).filter(b => b.status === 'active');
+
+              for (const bm of benchmarks) {
+                if (scraperBusy) break;
+                // 24時間以内にスクレイプ済みならスキップ
+                if (bm.last_scraped_at && Date.now() - bm.last_scraped_at < 24 * 60 * 60 * 1000) continue;
+
+                scraperBusy = true; scraperBusyTask = `日次ベンチマーク@${bm.threads_handle}`;
+                try {
+                  const result = await scrapeBenchmark(bm.threads_handle, bm.id, 'daily');
+                  appLog.info(`定時リサーチ(ベンチマーク): @${bm.threads_handle} ${result.ok ? `${(result as any).posts?.length || 0}件` : (result as any).error}`);
+                } finally {
+                  scraperBusy = false; scraperBusyTask = '';
+                }
+                // ベンチマーク間にランダム遅延（30-90秒）
+                await new Promise(r => setTimeout(r, 30000 + Math.random() * 60000));
+              }
+            } catch (err) {
+              appLog.error('定時リサーチ(ベンチマーク): 失敗', { error: String(err) });
+            }
           }
         }
       }
@@ -439,7 +539,7 @@ handleWithLog('research:setSchedule', async (_event, schedule: unknown) => {
     enabled: !!s.enabled,
     hour: Math.max(0, Math.min(23, s.hour || 0)),
     minute: Math.max(0, Math.min(59, s.minute || 0)),
-    types: Array.isArray(s.types) ? s.types.filter(t => ['trending', 'insights'].includes(t)) : ['trending'],
+    types: Array.isArray(s.types) ? s.types.filter(t => ['trending', 'insights', 'benchmark'].includes(t)) : ['trending'],
   };
   startResearchScheduler();
 
@@ -467,6 +567,8 @@ handleWithLog('scraper:search', async (_event, query: unknown) => {
   const q = query as string;
   if (scraperBusy) return scraperBusyError();
   if (!q || q.length < 2) return { ok: false, error: '検索キーワードは2文字以上必要です。' };
+  const verify = await verifyScraperAccount();
+  if (!verify.ok) return { ok: false, error: verify.error };
 
   const now = Date.now();
   const ONE_DAY = 24 * 60 * 60 * 1000;
@@ -504,6 +606,8 @@ handleWithLog('scraper:search', async (_event, query: unknown) => {
 
 handleWithLog('scraper:trending', async () => {
   if (scraperBusy) return scraperBusyError();
+  const verify = await verifyScraperAccount();
+  if (!verify.ok) return { ok: false, error: verify.error };
 
   const now = Date.now();
   const ONE_DAY = 24 * 60 * 60 * 1000;
@@ -588,8 +692,53 @@ app.whenReady().then(() => {
   appLog.info('App started', { version: app.getVersion(), platform: process.platform });
   createWindow();
   appLog.info('Main window created');
+  // 起動10秒後: Cookie自動延長（1日1回）
+  setTimeout(async () => {
+    if (scraperBusy) return;
+    scraperBusy = true; scraperBusyTask = 'Cookie延長';
+    try {
+      const result = await refreshSession();
+      if (result.ok && !result.authenticated) {
+        scraperSessionExpired = true;
+        appLog.warn('Cookie期限切れ: 再ログインが必要');
+      }
+    } catch { /* 起動ブロックしない */ }
+    finally { scraperBusy = false; scraperBusyTask = ''; }
+  }, 10000);
+  // 起動20秒後: ベンチマーク日次キャッチアップ
+  setTimeout(async () => {
+    try {
+      const bmRes = await loggedFetch(`${getApiBase()}/research/benchmarks`);
+      const bmData = await bmRes.json() as { benchmarks: Array<{ id: string; threads_handle: string; status: string; last_scraped_at: number | null }> };
+      const stale = (bmData.benchmarks || []).filter(b =>
+        b.status === 'active' && (!b.last_scraped_at || Date.now() - b.last_scraped_at > 24 * 60 * 60 * 1000)
+      );
+      if (stale.length === 0) return;
+
+      appLog.info(`ベンチマークキャッチアップ: ${stale.length}件の更新が必要`);
+      for (const bm of stale) {
+        if (scraperBusy) { appLog.info('ベンチマークキャッチアップ: 他のスクレイプ実行中、待機'); break; }
+
+        const verify = verifyScraperAccount();
+        if (!verify.ok) { appLog.warn(`ベンチマークキャッチアップ: ${verify.error}`); break; }
+
+        scraperBusy = true; scraperBusyTask = `キャッチアップ@${bm.threads_handle}`;
+        try {
+          const result = await scrapeBenchmark(bm.threads_handle, bm.id, 'daily');
+          appLog.info(`キャッチアップ: @${bm.threads_handle} ${result.ok ? `${(result as any).posts?.length || 0}件` : (result as any).error}`);
+        } finally {
+          scraperBusy = false; scraperBusyTask = '';
+        }
+        // ベンチマーク間30-90秒ランダム遅延
+        await new Promise(r => setTimeout(r, 30000 + Math.random() * 60000));
+      }
+    } catch (err) {
+      appLog.debug('ベンチマークキャッチアップ失敗', { error: String(err) });
+    }
+  }, 20000);
+  // 起動30秒後: Insights自動更新
   setTimeout(() => autoRefreshInsights().catch(() => {}), 30000);
-  // D1からスケジュール設定を読み込んでタイマー開始
+  // 起動5秒後: スケジュール設定読み込み
   setTimeout(() => loadScheduleFromD1().then(() => startResearchScheduler()).catch(() => {}), 5000);
 });
 

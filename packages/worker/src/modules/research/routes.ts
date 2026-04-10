@@ -128,10 +128,11 @@ researchRoutes.post('/benchmarks', async (c) => {
   }
 
   const id = crypto.randomUUID();
+  const category = body.category || null;
   await c.env.DB.prepare(
-    `INSERT INTO benchmarks (id, license_id, threads_handle, threads_user_id, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(id, licenseId, handle, threadsUserId, body.note || null, Date.now()).run();
+    `INSERT INTO benchmarks (id, license_id, threads_handle, threads_user_id, note, category, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, licenseId, handle, threadsUserId, body.note || null, category, Date.now()).run();
 
   return c.json({ id, created: true }, 201);
 });
@@ -191,34 +192,47 @@ researchRoutes.post('/benchmarks/:id/save-posts', async (c) => {
   if (!ownership.ok) return c.json({ error: 'アクセス権がありません' }, 403);
 
   const body = await c.req.json();
-  const posts = body.posts as Array<{ id: string; text: string; likes: number; replies: number; reposts: number }>;
+  const posts = body.posts as Array<{ id: string; text: string; likes: number; replies: number; reposts: number; media_urls?: string[]; media_type?: string }>;
 
   if (!Array.isArray(posts)) return c.json({ error: 'posts array required' }, 400);
 
+  // Get benchmark's follower_count for engagement rate calculation
+  const bmResult = await c.env.DB.prepare('SELECT follower_count FROM benchmarks WHERE id = ?').bind(benchmarkId).first() as { follower_count: number | null } | null;
+  const followerCount = bmResult?.follower_count || null;
+
   // バズ設定取得
-  const settings = await c.env.DB.prepare(
-    'SELECT buzz_likes, buzz_replies, buzz_reposts FROM research_settings WHERE license_id = ?'
-  ).bind(licenseId).first<{ buzz_likes: number; buzz_replies: number; buzz_reposts: number }>();
-  const buzzLikes = settings?.buzz_likes ?? 1000;
-  const buzzReplies = settings?.buzz_replies ?? 100;
-  const buzzReposts = settings?.buzz_reposts ?? 50;
+  const settingsRow = await c.env.DB.prepare(
+    'SELECT buzz_likes, buzz_replies, buzz_reposts, buzz_engagement_rate FROM research_settings WHERE license_id = ?'
+  ).bind(licenseId).first<{ buzz_likes: number; buzz_replies: number; buzz_reposts: number; buzz_engagement_rate: number }>();
+  const settings = {
+    buzz_likes: settingsRow?.buzz_likes ?? 1000,
+    buzz_replies: settingsRow?.buzz_replies ?? 100,
+    buzz_reposts: settingsRow?.buzz_reposts ?? 50,
+  };
+  const buzzEngRate = settingsRow?.buzz_engagement_rate || 0.08;
 
   let saved = 0;
   for (const post of posts) {
     const likes = post.likes ?? 0;
     const replies = post.replies ?? 0;
     const reposts = post.reposts ?? 0;
-    const isBuzz = (likes >= buzzLikes || replies >= buzzReplies || reposts >= buzzReposts) ? 1 : 0;
+    const engagement = likes + replies * 2 + reposts * 3;
+    const engagementRate = followerCount ? engagement / followerCount : null;
+    const isBuzz = followerCount && engagementRate !== null
+      ? (engagementRate >= buzzEngRate ? 1 : 0)
+      : ((likes >= settings.buzz_likes || replies >= settings.buzz_replies || reposts >= settings.buzz_reposts) ? 1 : 0);
+    const mediaUrls = post.media_urls ? JSON.stringify(post.media_urls) : null;
+    const mediaType = post.media_type || null;
 
     await c.env.DB.prepare(
-      `INSERT INTO scraped_posts (id, benchmark_id, threads_post_id, content, likes, replies, reposts, is_buzz, source, scraped_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'playwright', ?)
+      `INSERT INTO scraped_posts (id, benchmark_id, threads_post_id, content, media_urls, media_type, likes, replies, reposts, is_buzz, engagement_rate, follower_snapshot, source, scraped_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'playwright', ?)
        ON CONFLICT(benchmark_id, threads_post_id) DO UPDATE SET
-         likes = ?, replies = ?, reposts = ?, is_buzz = ?, scraped_at = ?`
+         likes = ?, replies = ?, reposts = ?, is_buzz = ?, engagement_rate = ?, follower_snapshot = ?, media_urls = ?, media_type = ?, scraped_at = ?`
     ).bind(
       crypto.randomUUID(), benchmarkId, post.id || crypto.randomUUID(),
-      post.text || null, likes, replies, reposts, isBuzz, Date.now(),
-      likes, replies, reposts, isBuzz, Date.now(),
+      post.text || null, mediaUrls, mediaType, likes, replies, reposts, isBuzz, engagementRate, followerCount, Date.now(),
+      likes, replies, reposts, isBuzz, engagementRate, followerCount, mediaUrls, mediaType, Date.now(),
     ).run();
     saved++;
   }
@@ -371,6 +385,7 @@ researchRoutes.get('/settings', async (c) => {
       buzz_likes: 1000, buzz_replies: 100, buzz_reposts: 50, retention_days: 90, max_pages: 2,
       schedule_enabled: 0, schedule_hour: 9, schedule_minute: 0,
       schedule_types: '["trending"]', search_min_likes: 0, search_max_results: 50,
+      benchmark_scrape_days: 30, search_filter_days: 7, buzz_engagement_rate: 0.08,
     });
   }
   return c.json(settings);
@@ -394,6 +409,9 @@ researchRoutes.put('/settings', async (c) => {
   const scheduleMinute = Math.floor(Number(body.schedule_minute ?? 0));
   const searchMinLikes = Math.floor(Number(body.search_min_likes ?? 0));
   const searchMaxResults = Math.floor(Number(body.search_max_results ?? 50));
+  const benchmarkScrapeDays = Math.max(1, Math.min(90, Number(body.benchmark_scrape_days ?? 30)));
+  const searchFilterDays = Math.max(1, Math.min(90, Number(body.search_filter_days ?? 7)));
+  const buzzEngagementRate = Math.max(0.01, Math.min(1.0, Number(body.buzz_engagement_rate ?? 0.08)));
 
   // schedule_types: JSON文字列バリデーション
   const validScheduleTypes = ['trending', 'keyword', 'benchmark', 'competitor'];
@@ -432,18 +450,21 @@ researchRoutes.put('/settings', async (c) => {
   }
 
   await c.env.DB.prepare(
-    `INSERT INTO research_settings (license_id, buzz_likes, buzz_replies, buzz_reposts, retention_days, max_pages, schedule_enabled, schedule_hour, schedule_minute, schedule_types, search_min_likes, search_max_results, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO research_settings (license_id, buzz_likes, buzz_replies, buzz_reposts, retention_days, max_pages, schedule_enabled, schedule_hour, schedule_minute, schedule_types, search_min_likes, search_max_results, benchmark_scrape_days, search_filter_days, buzz_engagement_rate, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(license_id) DO UPDATE SET
        buzz_likes = ?, buzz_replies = ?, buzz_reposts = ?, retention_days = ?, max_pages = ?,
        schedule_enabled = ?, schedule_hour = ?, schedule_minute = ?, schedule_types = ?,
-       search_min_likes = ?, search_max_results = ?, updated_at = ?`
+       search_min_likes = ?, search_max_results = ?,
+       benchmark_scrape_days = ?, search_filter_days = ?, buzz_engagement_rate = ?, updated_at = ?`
   ).bind(
     licenseId, buzzLikes, buzzReplies, buzzReposts, retentionDays, maxPages,
-    scheduleEnabled, scheduleHour, scheduleMinute, scheduleTypes, searchMinLikes, searchMaxResults, Date.now(),
+    scheduleEnabled, scheduleHour, scheduleMinute, scheduleTypes, searchMinLikes, searchMaxResults,
+    benchmarkScrapeDays, searchFilterDays, buzzEngagementRate, Date.now(),
     buzzLikes, buzzReplies, buzzReposts, retentionDays, maxPages,
     scheduleEnabled, scheduleHour, scheduleMinute, scheduleTypes,
-    searchMinLikes, searchMaxResults, Date.now(),
+    searchMinLikes, searchMaxResults,
+    benchmarkScrapeDays, searchFilterDays, buzzEngagementRate, Date.now(),
   ).run();
 
   return c.json({ updated: true });

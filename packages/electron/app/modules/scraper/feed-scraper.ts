@@ -8,6 +8,8 @@ import { getApiBase } from '../config/api-base';
 
 const log = createLogger('scraper');
 
+let firstPostKeysLogged = false;
+
 interface TrendingPost {
   id: string;
   text: string;
@@ -17,6 +19,8 @@ interface TrendingPost {
   reposts: number;
   timestamp: string;
   permalink?: string;
+  media_urls?: string[];
+  media_type?: 'text' | 'image' | 'video' | 'carousel';
 }
 
 /**
@@ -71,6 +75,91 @@ function interceptResponses(
 }
 
 /**
+ * ゴール駆動スクロール: 日数/件数/フィード末尾で停止
+ */
+async function scrollUntilGoal(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
+  posts: TrendingPost[],
+  options: {
+    maxAge?: number;
+    targetCount?: number;
+    maxScrolls: number;
+    timeoutMs: number;
+    breakEvery?: number;
+    breakDurationMs?: number;
+    label: string;
+  },
+): Promise<{ reason: string }> {
+  const { maxAge, targetCount = 50, maxScrolls, timeoutMs, breakEvery, breakDurationMs = 30000, label } = options;
+  const startTime = Date.now();
+  let noNewPostsCount = 0;
+  const cutoffDate = maxAge ? Date.now() - maxAge * 24 * 60 * 60 * 1000 : 0;
+
+  for (let scroll = 0; scroll < maxScrolls; scroll++) {
+    // 休憩（安全対策）
+    if (breakEvery && scroll > 0 && scroll % breakEvery === 0) {
+      // 休憩時間をランダム化（固定パターン回避）: 基準値の0.5〜2.0倍
+      const minBreak = Math.floor(breakDurationMs * 0.5);
+      const maxBreak = Math.floor(breakDurationMs * 2.0);
+      log.info(`${label}: 休憩 (${scroll}/${maxScrolls}スクロール後, ${Math.floor(minBreak / 1000)}-${Math.floor(maxBreak / 1000)}秒)`);
+      await humanDelay(page, minBreak, maxBreak);
+    }
+
+    const beforeCount = posts.length;
+    await humanScroll(page, 3);
+    await humanDelay(page, 2000, 4000);
+
+    const newCount = posts.length - beforeCount;
+
+    // Log progress every 5 scrolls
+    if (scroll % 5 === 0 || newCount > 0) {
+      log.info(`${label}: スクロール${scroll + 1}/${maxScrolls} 投稿=${posts.length}件 (+${newCount})`);
+    }
+
+    // Check: target count reached
+    if (posts.length >= targetCount) {
+      log.info(`${label}: 目標件数到達 (${posts.length}/${targetCount})`);
+      return { reason: 'count' };
+    }
+
+    // Check: max age reached (check latest posts' timestamps)
+    if (maxAge && posts.length > 0) {
+      const latestPosts = posts.slice(-5);
+      const hasOldPost = latestPosts.some(p => {
+        if (!p.timestamp) return false;
+        const postTime = typeof p.timestamp === 'number' ? (p.timestamp as unknown as number) * 1000 : new Date(p.timestamp).getTime();
+        return postTime > 0 && postTime < cutoffDate;
+      });
+      if (hasOldPost) {
+        log.info(`${label}: 目標期間到達 (${maxAge}日前の投稿に到達)`);
+        return { reason: 'age' };
+      }
+    }
+
+    // Check: end of feed (3 consecutive scrolls with no new posts)
+    if (newCount === 0) {
+      noNewPostsCount++;
+      if (noNewPostsCount >= 3) {
+        log.info(`${label}: フィード末尾到達 (3回連続で新規0件)`);
+        return { reason: 'end_of_feed' };
+      }
+    } else {
+      noNewPostsCount = 0;
+    }
+
+    // Check: timeout
+    if (Date.now() - startTime >= timeoutMs) {
+      log.info(`${label}: タイムアウト (${Math.floor(timeoutMs / 1000)}秒)`);
+      return { reason: 'timeout' };
+    }
+  }
+
+  log.info(`${label}: 最大スクロール到達 (${maxScrolls}回)`);
+  return { reason: 'max_scrolls' };
+}
+
+/**
  * トレンドフィード取得（ネットワーク傍受方式）
  */
 export async function scrapeTrending(): Promise<{ ok: true; posts: TrendingPost[] } | { ok: false; error: string }> {
@@ -96,10 +185,10 @@ export async function scrapeTrending(): Promise<{ ok: true; posts: TrendingPost[
     }
 
     log.info('トレンド取得: スクロール開始');
-    await humanScroll(page, 5);
-    await humanDelay(page, 2000, 4000);
-    await humanScroll(page, 3);
-    await humanDelay(page, 2000, 3000);
+    const scrollResult = await scrollUntilGoal(page, posts, {
+      targetCount: 30, maxScrolls: 15, timeoutMs: 60000, label: 'トレンド取得',
+    });
+    log.info(`トレンド取得: スクロール完了 → ${scrollResult.reason}`);
 
     // レスポンス傍受で0件の場合、ページ内の埋め込みデータから抽出を試行
     if (posts.length === 0) {
@@ -195,6 +284,13 @@ function findPostNodes(obj: Record<string, unknown>, posts: TrendingPost[], seen
     if (id && !seen.has(id)) {
       seen.add(id);
 
+      // 初回投稿ノードのキー一覧をログ出力（メディアフィールド発見用）
+      if (!firstPostKeysLogged) {
+        firstPostKeysLogged = true;
+        const keys = Object.keys(obj).join(', ');
+        log.debug(`投稿ノードのキー一覧: [${keys}]`);
+      }
+
       // テキスト抽出（複数パターン）
       let caption = '';
       if (obj.caption && typeof obj.caption === 'object') {
@@ -212,6 +308,39 @@ function findPostNodes(obj: Record<string, unknown>, posts: TrendingPost[], seen
       const user = (obj.user as Record<string, unknown>) || {};
       const threadInfo = (obj.text_post_app_info as Record<string, unknown>) || {};
 
+      // メディア抽出
+      let mediaUrls: string[] = [];
+      let mediaType: 'text' | 'image' | 'video' | 'carousel' = 'text';
+
+      const imgVersions = obj.image_versions2 as Record<string, unknown> | undefined;
+      const videoVersions = obj.video_versions as Array<Record<string, unknown>> | undefined;
+      const carouselMedia = obj.carousel_media as Array<Record<string, unknown>> | undefined;
+      const rawMediaType = obj.media_type as number | undefined;
+
+      if (carouselMedia && Array.isArray(carouselMedia)) {
+        mediaType = 'carousel';
+        for (const item of carouselMedia) {
+          const iv = item.image_versions2 as Record<string, unknown> | undefined;
+          const candidates = iv?.candidates as Array<Record<string, unknown>> | undefined;
+          if (candidates?.[0]?.url) mediaUrls.push(candidates[0].url as string);
+        }
+      } else if (videoVersions && Array.isArray(videoVersions) && videoVersions[0]?.url) {
+        mediaType = 'video';
+        mediaUrls.push(videoVersions[0].url as string);
+      } else if (imgVersions) {
+        const candidates = imgVersions.candidates as Array<Record<string, unknown>> | undefined;
+        if (candidates?.[0]?.url) {
+          mediaType = 'image';
+          mediaUrls.push(candidates[0].url as string);
+        }
+      } else if (rawMediaType === 2) {
+        mediaType = 'video';
+      } else if (rawMediaType === 8) {
+        mediaType = 'carousel';
+      } else if (rawMediaType === 1) {
+        mediaType = 'image';
+      }
+
       posts.push({
         id,
         text: caption,
@@ -224,6 +353,8 @@ function findPostNodes(obj: Record<string, unknown>, posts: TrendingPost[], seen
         reposts: (obj.repost_count as number) || (obj.reshare_count as number) || 0,
         timestamp: (obj.taken_at as string) || '',
         permalink: obj.code ? `https://www.threads.net/post/${obj.code}` : undefined,
+        media_urls: mediaUrls.length > 0 ? mediaUrls : undefined,
+        media_type: mediaType,
       });
     }
   }
@@ -271,9 +402,10 @@ export async function scrapeOwnInsights(handle: string, accountId: string): Prom
     }
 
     log.info('Insights取得: スクロール開始');
-    await humanScroll(page, 5);
-    await humanDelay(page, 2000, 4000);
-    await humanScroll(page, 3);
+    const scrollResult = await scrollUntilGoal(page, posts, {
+      targetCount: 30, maxScrolls: 20, timeoutMs: 90000, label: `Insights@${handle}`,
+    });
+    log.info(`Insights取得: スクロール完了 → ${scrollResult.reason}`);
 
     // D1に保存
     let saved = 0;
@@ -346,13 +478,11 @@ export async function scrapeSearch(query: string, scrollRounds = 3, maxResults =
       return { ok: false, error: 'ログインが必要です。設定画面から「Threadsログイン」を実行してください。' };
     }
 
-    log.info(`検索スクレイプ: スクロール開始 (${scrollRounds}ラウンド)`);
-    for (let round = 0; round < scrollRounds; round++) {
-      const steps = 4 + Math.floor(Math.random() * 3); // 4-6回/ラウンド
-      await humanScroll(page, steps);
-      await humanDelay(page, 2000, 5000);
-      log.debug(`検索スクレイプ: ラウンド${round + 1}/${scrollRounds} 完了 (現在${posts.length}件)`);
-    }
+    log.info(`検索スクレイプ: スクロール開始`);
+    const scrollResult = await scrollUntilGoal(page, posts, {
+      targetCount: maxResults, maxScrolls: 25, timeoutMs: 90000, label: `検索"${query}"`,
+    });
+    log.info(`検索スクレイプ: スクロール完了 → ${scrollResult.reason}`);
 
     // レスポンス傍受で0件の場合、ページ内の埋め込みデータから抽出を試行
     if (posts.length === 0) {
@@ -430,7 +560,7 @@ export async function scrapeSearch(query: string, scrollRounds = 3, maxResults =
 /**
  * ベンチマークアカウントのプロフィール+投稿をスクレイプ
  */
-export async function scrapeBenchmark(handle: string, benchmarkId: string): Promise<{
+export async function scrapeBenchmark(handle: string, benchmarkId: string, mode: 'initial' | 'daily' = 'initial'): Promise<{
   ok: true;
   profile: { username: string; name: string; follower_count: number; user_id: string };
   posts: TrendingPost[];
@@ -451,16 +581,18 @@ export async function scrapeBenchmark(handle: string, benchmarkId: string): Prom
     await humanDelay(page, 3000, 5000);
 
     const authed = await isAuthenticated(page);
-    log.info(`ベンチマーク: 認証チェック → ${authed ? 'OK' : 'NG'}`);
+    const pageTitle = await page.title();
+    log.info(`ベンチマーク: 認証チェック → ${authed ? 'OK' : 'NG'} (title="${pageTitle}")`);
     if (!authed) {
-      return { ok: false, error: 'ログインが必要です。設定画面から「Threadsログイン」を実行してください。' };
+      return { ok: false, error: `@${handle} にアクセスできません。ログインが必要か、非公開アカウントの可能性があります。` };
     }
 
-    log.info('ベンチマーク: スクロール開始');
-    await humanScroll(page, 4);
-    await humanDelay(page, 2000, 4000);
-    await humanScroll(page, 3);
-    await humanDelay(page, 1000, 2000);
+    const scrollOptions = mode === 'initial'
+      ? { maxAge: 30, targetCount: 50, maxScrolls: 30, timeoutMs: 180000, breakEvery: 10, breakDurationMs: 30000, label: `ベンチマーク@${handle}` }
+      : { maxAge: 1, targetCount: 20, maxScrolls: 10, timeoutMs: 60000, label: `ベンチマーク日次@${handle}` };
+    log.info(`ベンチマーク: スクロール開始 (${mode}モード)`);
+    const scrollResult = await scrollUntilGoal(page, posts, scrollOptions);
+    log.info(`ベンチマーク: スクロール完了 → ${scrollResult.reason}`);
 
     // レスポンス傍受で0件の場合、ページ内の埋め込みデータから抽出を試行
     if (posts.length === 0) {
@@ -604,10 +736,10 @@ function findProfileNode(obj: Record<string, unknown>, profile: { username: stri
 /**
  * 手動ログイン用ブラウザ起動（headed）
  */
-export async function openLoginBrowser(): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function openLoginBrowser(): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
   try {
     log.info('ログインブラウザ: 起動 (headed)');
-    const { page } = await launchBrowser(true);
+    const { page, context: ctx } = await launchBrowser(true);
 
     await page.goto('https://www.threads.net/login', { waitUntil: 'networkidle', timeout: 30000 });
     log.info('ログインブラウザ: ログインページ表示');
@@ -620,9 +752,15 @@ export async function openLoginBrowser(): Promise<{ ok: true } | { ok: false; er
 
       if (await isAuthenticated(page)) {
         await saveStorageState();
+
+        // CookieからユーザーIDを取得
+        const state = await ctx.storageState();
+        const userIdCookie = state.cookies?.find(c => c.name === 'ds_user_id');
+        const userId = userIdCookie?.value || '';
+        log.info(`ログインブラウザ: ログイン成功 (user_id=${userId})`);
+
         await closeBrowser();
-        log.info('ログインブラウザ: ログイン成功');
-        return { ok: true };
+        return { ok: true, userId };
       }
     } catch {
       // タイムアウト

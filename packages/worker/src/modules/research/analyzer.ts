@@ -10,22 +10,29 @@ export async function redetectBuzz(
   db: D1Database, licenseId: string, benchmarkId: string,
 ): Promise<number> {
   const settings = await db.prepare(
-    'SELECT buzz_likes, buzz_replies, buzz_reposts FROM research_settings WHERE license_id = ?'
-  ).bind(licenseId).first<{ buzz_likes: number; buzz_replies: number; buzz_reposts: number }>();
+    'SELECT buzz_likes, buzz_replies, buzz_reposts, buzz_engagement_rate FROM research_settings WHERE license_id = ?'
+  ).bind(licenseId).first<{ buzz_likes: number; buzz_replies: number; buzz_reposts: number; buzz_engagement_rate: number }>();
 
   if (!settings) return 0;
 
+  const buzzEngRate = settings.buzz_engagement_rate || 0.08;
+
   // 全投稿のバズフラグをリセット
   await db.prepare(
-    'UPDATE scraped_posts SET is_buzz = 0 WHERE benchmark_id = ?'
-  ).bind(benchmarkId).run();
+    'UPDATE scraped_posts SET is_buzz = 0 WHERE benchmark_id IN (SELECT id FROM benchmarks WHERE license_id = ?) AND benchmark_id = ?'
+  ).bind(licenseId, benchmarkId).run();
 
-  // 閾値超えをバズに設定
+  // engagement_rate based (when follower_snapshot available) OR absolute fallback
   const result = await db.prepare(
     `UPDATE scraped_posts SET is_buzz = 1
-     WHERE benchmark_id = ?
-       AND (likes >= ? OR replies >= ? OR reposts >= ?)`
-  ).bind(benchmarkId, settings.buzz_likes, settings.buzz_replies, settings.buzz_reposts).run();
+     WHERE benchmark_id IN (SELECT id FROM benchmarks WHERE license_id = ?)
+       AND benchmark_id = ?
+       AND (
+         (follower_snapshot IS NOT NULL AND engagement_rate >= ?)
+         OR
+         (follower_snapshot IS NULL AND (likes >= ? OR replies >= ? OR reposts >= ?))
+       )`
+  ).bind(licenseId, benchmarkId, buzzEngRate, settings.buzz_likes, settings.buzz_replies, settings.buzz_reposts).run();
 
   return result.meta.changes || 0;
 }

@@ -167,6 +167,8 @@ export function Settings({ onAssistantNameChange, onOpenLogs }: SettingsProps): 
         )}
       </section>
 
+      <ScraperAccountStatus />
+
       <AssistantSettings onNameChange={onAssistantNameChange} />
 
       {onOpenLogs && (
@@ -296,6 +298,97 @@ function AssistantSettings({ onNameChange }: { onNameChange?: (name: string) => 
           アプリ起動時にチャットパネルを自動で開く
         </label>
       </div>
+    </section>
+  );
+}
+
+function ScraperAccountStatus(): React.JSX.Element {
+  const [status, setStatus] = useState<{ loggedIn: boolean; userId: string | null; handle: string | null; isLinkedAccount: boolean; sessionExpired?: boolean } | null>(null);
+  const [loginStatus, setLoginStatus] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const loadStatus = () => {
+    if ((window.urads as Record<string, unknown>).scraperStatus) {
+      (window.urads as Record<string, Function>).scraperStatus().then((s: typeof status) => setStatus(s)).catch(() => {});
+    }
+  };
+
+  useEffect(() => { loadStatus(); }, []);
+
+  const handleLogin = async () => {
+    setIsLoggingIn(true);
+    setLoginStatus('ブラウザを起動中... Threadsにログインしてください');
+    try {
+      const result = await (window.urads as Record<string, Function>).scraperLogin() as {
+        ok: boolean; userId?: string; warning?: string; error?: string;
+      };
+      if (result.ok) {
+        if (result.warning) {
+          setLoginStatus(result.warning);
+        } else {
+          setLoginStatus('ログイン成功');
+        }
+        loadStatus();
+      } else {
+        setLoginStatus(`失敗: ${result.error}`);
+      }
+    } catch (err) {
+      setLoginStatus(`エラー: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  return (
+    <section style={{ marginBottom: 32 }}>
+      <h2 style={{ fontSize: 18, marginBottom: 12 }}>リサーチ用ログイン</h2>
+      <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+        スクレイピング（ベンチマーク、トレンド、検索）で使用するThreadsアカウントです。
+        連携アカウントと同じアカウントでログインしてください。
+      </p>
+
+      <div style={{ padding: 12, borderRadius: 8, background: status?.sessionExpired ? '#fde8e8' : status?.loggedIn ? '#f0f8f0' : '#fef3f0', marginBottom: 12 }}>
+        {status?.sessionExpired ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: '#e74c3c', fontWeight: 'bold' }}>!</span>
+            <span style={{ color: '#e74c3c' }}>Cookie期限切れ - 再ログインが必要です</span>
+          </div>
+        ) : status?.loggedIn ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: status.isLinkedAccount ? '#27ae60' : '#e67e22', fontWeight: 'bold' }}>
+              {status.isLinkedAccount ? 'OK' : '!'}
+            </span>
+            <span>
+              {status.handle ? `@${status.handle}` : `ID: ${status.userId}`}
+              {' '}でログイン中
+            </span>
+            {!status.isLinkedAccount && (
+              <span style={{ color: '#e74c3c', fontSize: 12 }}>
+                （連携アカウントと不一致）
+              </span>
+            )}
+          </div>
+        ) : (
+          <span style={{ color: '#e74c3c' }}>未ログイン</span>
+        )}
+      </div>
+
+      <button
+        onClick={handleLogin}
+        disabled={isLoggingIn}
+        style={{
+          padding: '8px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
+          background: isLoggingIn ? '#ccc' : '#1a1a2e', color: '#fff', fontSize: 14,
+        }}
+      >
+        {isLoggingIn ? 'ログイン中...' : status?.loggedIn ? 'アカウントを変更' : 'Threadsにログイン'}
+      </button>
+
+      {loginStatus && (
+        <p style={{ marginTop: 8, fontSize: 13, color: loginStatus.includes('失敗') || loginStatus.includes('不一致') ? '#e74c3c' : '#27ae60' }}>
+          {loginStatus}
+        </p>
+      )}
     </section>
   );
 }

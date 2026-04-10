@@ -59,7 +59,11 @@ export async function launchBrowser(headed = false): Promise<{ context: BrowserC
       const encrypted = readFileSync(STORAGE_STATE_PATH, 'utf-8');
       const decrypted = decryptCookies(encrypted);
       storageState = JSON.parse(decrypted);
-      log.info('Cookie復元: 成功');
+      // ログイン中のアカウントを特定
+      const state = storageState as { cookies?: Array<{ name: string; value: string }> };
+      const userCookie = state.cookies?.find(c => c.name === 'ds_user_id' || c.name === 'sessionid');
+      const userIdCookie = state.cookies?.find(c => c.name === 'ds_user_id');
+      log.info(`Cookie復元: 成功 (user_id=${userIdCookie?.value || '不明'}, cookies=${state.cookies?.length || 0}件)`);
     } catch {
       log.warn('Cookie復元: 失敗（再ログイン必要）');
     }
@@ -89,6 +93,98 @@ export async function saveStorageState(): Promise<void> {
     const state = await context.storageState();
     const encrypted = encryptCookies(JSON.stringify(state));
     writeFileSync(STORAGE_STATE_PATH, encrypted, { mode: 0o600 });
+  }
+}
+
+/**
+ * 保存済みCookieからログイン中のThreadsユーザーIDを取得
+ */
+export function getScraperUserId(): string | null {
+  if (!existsSync(STORAGE_STATE_PATH)) return null;
+  try {
+    const encrypted = readFileSync(STORAGE_STATE_PATH, 'utf-8');
+    const decrypted = decryptCookies(encrypted);
+    const state = JSON.parse(decrypted) as { cookies?: Array<{ name: string; value: string }> };
+    const userIdCookie = state.cookies?.find(c => c.name === 'ds_user_id');
+    return userIdCookie?.value || null;
+  } catch {
+    return null;
+  }
+}
+
+// --- 許可済みユーザーID管理 ---
+const ALLOWED_USERS_PATH = join(app.getPath('userData'), 'scraper-allowed-users.json');
+const LAST_REFRESH_PATH = join(app.getPath('userData'), 'scraper-last-refresh.txt');
+
+export function saveAllowedUserId(userId: string): void {
+  let list: string[] = [];
+  try {
+    if (existsSync(ALLOWED_USERS_PATH)) {
+      list = JSON.parse(readFileSync(ALLOWED_USERS_PATH, 'utf-8'));
+    }
+  } catch { /* 破損時は空リスト */ }
+  if (!list.includes(userId)) list.push(userId);
+  writeFileSync(ALLOWED_USERS_PATH, JSON.stringify(list), { mode: 0o600 });
+  log.info(`許可リスト更新: ${userId} (${list.length}件)`);
+}
+
+export function isAllowedUserId(userId: string): boolean {
+  try {
+    if (!existsSync(ALLOWED_USERS_PATH)) return false;
+    const list = JSON.parse(readFileSync(ALLOWED_USERS_PATH, 'utf-8')) as string[];
+    return list.includes(userId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cookie自動延長（1日1回）
+ * headless で threads.net を開き、Cookie を更新する
+ */
+export async function refreshSession(): Promise<{ ok: boolean; authenticated: boolean }> {
+  // Cookieなければスキップ
+  if (!existsSync(STORAGE_STATE_PATH)) {
+    return { ok: false, authenticated: false };
+  }
+
+  // 24時間以内に延長済みならスキップ
+  try {
+    if (existsSync(LAST_REFRESH_PATH)) {
+      const lastRefresh = parseInt(readFileSync(LAST_REFRESH_PATH, 'utf-8'), 10);
+      if (Date.now() - lastRefresh < 24 * 60 * 60 * 1000) {
+        log.info('Cookie延長: 24時間以内に実行済み、スキップ');
+        return { ok: true, authenticated: true };
+      }
+    }
+  } catch { /* ファイル破損時は続行 */ }
+
+  try {
+    log.info('Cookie延長: 開始');
+    const { page } = await launchBrowser(false);
+
+    await page.goto('https://www.threads.net/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 10000,
+    });
+
+    const authed = await isAuthenticated(page);
+    await saveStorageState();
+    await closeBrowser();
+
+    if (authed) {
+      writeFileSync(LAST_REFRESH_PATH, String(Date.now()));
+      const userId = getScraperUserId();
+      log.info(`Cookie延長: 成功 (user_id=${userId})`);
+      return { ok: true, authenticated: true };
+    } else {
+      log.warn('Cookie延長: セッション期限切れ（再ログイン必要）');
+      return { ok: true, authenticated: false };
+    }
+  } catch (err) {
+    await closeBrowser().catch(() => {});
+    log.warn('Cookie延長: 失敗', { error: String(err) });
+    return { ok: false, authenticated: false };
   }
 }
 
@@ -137,8 +233,25 @@ export async function closeBrowser(): Promise<void> {
  */
 export async function isAuthenticated(page: Page): Promise<boolean> {
   try {
+    // 複数の方法でログインページを検出
     const loginForm = await page.locator('input[name="username"]').count();
-    return loginForm === 0;
+    if (loginForm > 0) return false;
+
+    // ページタイトルで検出（「Threads・ログイン」等）
+    const title = await page.title();
+    if (title.includes('ログイン') || title.includes('Login') || title.includes('Sign in')) {
+      log.warn(`認証NG: ページタイトル="${title}"`);
+      return false;
+    }
+
+    // URLで検出（/login にリダイレクトされた場合）
+    const url = page.url();
+    if (url.includes('/login') || url.includes('/accounts/login')) {
+      log.warn(`認証NG: URL="${url}"`);
+      return false;
+    }
+
+    return true;
   } catch {
     return false;
   }
