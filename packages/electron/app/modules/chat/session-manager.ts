@@ -11,42 +11,12 @@ import {
 import * as sessionStore from './session-store';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
 
 import { getApiBase } from '../config/api-base';
 import { createLogger } from '../../unified-logger';
+import { findClaudeExecutable } from '../ai/claude-path';
 
 const log = createLogger('chat');
-
-/**
- * Claude Code CLIのパスを検出
- */
-function findClaudeExecutable(): string | undefined {
-  // 環境変数で明示指定
-  if (process.env.CLAUDE_CODE_PATH && existsSync(process.env.CLAUDE_CODE_PATH)) {
-    return process.env.CLAUDE_CODE_PATH;
-  }
-
-  // よくあるインストール先を順に探す
-  const candidates = [
-    join(process.env.HOME || '', '.local', 'bin', 'claude'),
-    join(process.env.HOME || '', '.claude', 'bin', 'claude'),
-    '/usr/local/bin/claude',
-    '/usr/bin/claude',
-  ];
-
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
-  }
-
-  // which で探す（最終手段）
-  try {
-    const result = execSync('which claude', { encoding: 'utf-8', timeout: 3000 }).trim();
-    if (result && existsSync(result)) return result;
-  } catch { /* not found */ }
-
-  return undefined;
-}
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30分
 

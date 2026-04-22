@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from '../../../config';
+import type { RewriteRunResult, RewriteSkipReason } from '@urads/shared';
 
 interface Benchmark {
   id: string;
@@ -55,6 +56,26 @@ interface TrendingPost {
   reposts: number;
 }
 
+interface Account {
+  id: string;
+  threads_handle: string;
+  display_name: string | null;
+}
+
+type RewriteCardState =
+  | { kind: 'running'; startedAt: number }
+  | { kind: 'ok'; message: string }
+  | { kind: 'skip'; message: string }
+  | { kind: 'err'; message: string };
+
+const SKIP_MESSAGES: Record<RewriteSkipReason, string> = {
+  persona_not_set: '先に世界観を設定してください（設定 → 世界観（persona））',
+  ng_violation: 'NG判定でスキップ',
+  all_failed_guardrail: 'ガードレール全失格でスキップ（丸パクリ防止）',
+  skill_error: 'AI実行エラー',
+  invalid_skill_output: 'AI出力をJSON解析できませんでした',
+};
+
 export function Research(): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('benchmarks');
   const [mountedTabs, setMountedTabs] = useState<Set<Tab>>(new Set(['benchmarks']));
@@ -73,11 +94,89 @@ export function Research(): React.JSX.Element {
   const [searchResults, setSearchResults] = useState<ScrapedPost[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState<string>('');
+  const [rewriteStates, setRewriteStates] = useState<Record<string, RewriteCardState>>({});
+  const [, forceTick] = useState(0); // running タイマー再描画用
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     loadBenchmarks();
     loadBudget();
+    loadAccounts();
   }, []);
+
+  // リライト実行中がある限り 1秒刻みで再描画（経過秒カウンタ用）
+  useEffect(() => {
+    const hasRunning = Object.values(rewriteStates).some((s) => s.kind === 'running');
+    if (hasRunning && !tickRef.current) {
+      tickRef.current = setInterval(() => forceTick((n) => n + 1), 1000);
+    } else if (!hasRunning && tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+    return () => {
+      if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    };
+  }, [rewriteStates]);
+
+  const loadAccounts = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/accounts`);
+      const d = await r.json();
+      const accs: Account[] = d.accounts || [];
+      setAccounts(accs);
+      if (accs.length > 0 && !selectedAccount) setSelectedAccount(accs[0].id);
+    } catch { /* ignore */ }
+  };
+
+  const handleRewrite = async (postId: string) => {
+    if (!selectedAccount) {
+      setRewriteStates((s) => ({ ...s, [postId]: { kind: 'err', message: 'アカウントを選択してください' } }));
+      return;
+    }
+    setRewriteStates((s) => ({ ...s, [postId]: { kind: 'running', startedAt: Date.now() } }));
+    try {
+      const res = (await (window.urads as any).aiRunBuzzRewrite({
+        scraped_post_id: postId,
+        account_id: selectedAccount,
+      })) as RewriteRunResult;
+      if (res.ok) {
+        const msg = res.already_existed
+          ? `既存の下書きに到達しました（案: ${res.variants_saved}件）`
+          : `下書き保存しました（案: ${res.variants_saved}件）`;
+        setRewriteStates((s) => ({ ...s, [postId]: { kind: 'ok', message: msg } }));
+        setTimeout(() => {
+          setRewriteStates((s) => {
+            const next = { ...s };
+            if (next[postId]?.kind === 'ok') delete next[postId];
+            return next;
+          });
+        }, 8000);
+      } else if (res.skipped) {
+        const base = SKIP_MESSAGES[res.reason] ?? 'スキップ';
+        setRewriteStates((s) => ({
+          ...s,
+          [postId]: { kind: 'skip', message: res.detail ? `${base}（${res.detail}）` : base },
+        }));
+      } else {
+        setRewriteStates((s) => ({ ...s, [postId]: { kind: 'err', message: res.error } }));
+      }
+    } catch (err) {
+      setRewriteStates((s) => ({
+        ...s,
+        [postId]: { kind: 'err', message: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  };
+
+  const dismissRewriteStatus = (postId: string) => {
+    setRewriteStates((s) => {
+      const next = { ...s };
+      delete next[postId];
+      return next;
+    });
+  };
 
   const loadBenchmarks = () => {
     fetch(`${API_BASE}/research/benchmarks`)
@@ -273,7 +372,19 @@ export function Research(): React.JSX.Element {
           {/* 投稿一覧 */}
           {selectedBenchmark && posts.length > 0 && (
             <div>
-              <h3 style={{ fontSize: 16, marginBottom: 12 }}>収集投稿（{posts.length}件）</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <h3 style={{ fontSize: 16, margin: 0 }}>収集投稿（{posts.length}件）</h3>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <label style={{ fontSize: 12, color: '#666' }}>リライト対象</label>
+                  <select value={selectedAccount} onChange={(e) => setSelectedAccount(e.target.value)}
+                    style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12, minWidth: 180 }}>
+                    {accounts.length === 0 && <option value="">（アカウント未連携）</option>}
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>@{a.threads_handle}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {posts.map((p) => (
                   <div key={p.id} style={{ padding: 12, borderRadius: 8, border: p.is_buzz ? '2px solid #f39c12' : '1px solid #eee',
@@ -297,7 +408,7 @@ export function Research(): React.JSX.Element {
                       return null;
                     })()}
                     <p style={{ fontSize: 14, lineHeight: 1.5 }}>{p.content || '(メディア投稿)'}</p>
-                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#666', marginTop: 4 }}>
+                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#666', marginTop: 4, alignItems: 'center' }}>
                       <span>❤ {p.likes}</span>
                       <span>💬 {p.replies}</span>
                       <span>🔁 {p.reposts}</span>
@@ -307,7 +418,58 @@ export function Research(): React.JSX.Element {
                         </span>
                       )}
                       {p.posted_at && <span>{new Date(p.posted_at).toLocaleDateString()}</span>}
+                      {p.is_buzz === 1 && (() => {
+                        const st = rewriteStates[p.id];
+                        const running = st?.kind === 'running';
+                        return (
+                          <button
+                            onClick={() => handleRewrite(p.id)}
+                            disabled={running || accounts.length === 0}
+                            style={{
+                              marginLeft: 'auto', padding: '4px 12px', borderRadius: 4,
+                              border: 'none',
+                              background: running ? '#ccc' : '#8e44ad',
+                              color: '#fff', fontSize: 12, cursor: running ? 'wait' : 'pointer',
+                            }}
+                            title={accounts.length === 0 ? 'アカウント未連携' : 'この投稿をリライト'}
+                          >
+                            {running ? 'リライト中...' : 'リライト'}
+                          </button>
+                        );
+                      })()}
                     </div>
+
+                    {/* リライト結果 */}
+                    {(() => {
+                      const st = rewriteStates[p.id];
+                      if (!st) return null;
+                      const palette = {
+                        running: { bg: '#eef5ff', color: '#1a5490', icon: '🔄' },
+                        ok: { bg: '#eaf9ee', color: '#1e7a3b', icon: '✅' },
+                        skip: { bg: '#fff7e0', color: '#a56a00', icon: '⚠' },
+                        err: { bg: '#fdecea', color: '#c0392b', icon: '❌' },
+                      }[st.kind];
+                      const body = st.kind === 'running'
+                        ? `リライト中... (${Math.floor((Date.now() - st.startedAt) / 1000)}秒)`
+                        : st.message;
+                      return (
+                        <div style={{
+                          marginTop: 8, padding: '6px 10px', borderRadius: 4,
+                          background: palette.bg, color: palette.color, fontSize: 12,
+                          display: 'flex', alignItems: 'center', gap: 8,
+                        }}>
+                          <span>{palette.icon}</span>
+                          <span style={{ flex: 1 }}>{body}</span>
+                          {st.kind !== 'running' && (
+                            <button onClick={() => dismissRewriteStatus(p.id)}
+                              style={{ border: 'none', background: 'transparent', color: palette.color, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+                              title="閉じる">
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>

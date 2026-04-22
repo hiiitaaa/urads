@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
-import { API_BASE, getApiBase } from '../../../config';
+import { API_BASE } from '../../../config';
+import { EMPTY_PERSONA_TEMPLATE, PERSONA_CONTENT_MAX_LENGTH, PERSONA_PRESETS } from '@urads/shared';
 
 declare global {
   interface Window {
@@ -29,10 +30,9 @@ interface SavedAccount {
 
 interface SettingsProps {
   onAssistantNameChange?: (name: string) => void;
-  onOpenLogs?: () => void;
 }
 
-export function Settings({ onAssistantNameChange, onOpenLogs }: SettingsProps): React.JSX.Element {
+export function Settings({ onAssistantNameChange }: SettingsProps): React.JSX.Element {
   const [health, setHealth] = useState<string>('確認中...');
   const [accounts, setAccounts] = useState<SavedAccount[]>([]);
   const [authStatus, setAuthStatus] = useState<string | null>(null);
@@ -93,13 +93,7 @@ export function Settings({ onAssistantNameChange, onOpenLogs }: SettingsProps): 
     <div>
       <h1 style={{ fontSize: 24, marginBottom: 20 }}>設定</h1>
 
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>サーバー接続</h2>
-        <div style={{ padding: 16, borderRadius: 8, background: '#f8f9fa' }}>
-          <p>Workers API: <strong>{health}</strong></p>
-          <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>エンドポイント: {getApiBase()}</p>
-        </div>
-      </section>
+      <ServerSettings health={health} />
 
       <section style={{ marginBottom: 32 }}>
         <h2 style={{ fontSize: 18, marginBottom: 12 }}>アカウント管理</h2>
@@ -167,30 +161,203 @@ export function Settings({ onAssistantNameChange, onOpenLogs }: SettingsProps): 
         )}
       </section>
 
-      <ScraperAccountStatus />
-
       <AssistantSettings onNameChange={onAssistantNameChange} />
 
-      {onOpenLogs && (
-        <section style={{ marginBottom: 32 }}>
-          <h2 style={{ fontSize: 18, marginBottom: 12 }}>開発者ツール</h2>
-          <button
-            onClick={onOpenLogs}
-            style={{
-              padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd',
-              background: '#f8f9fa', fontSize: 13, cursor: 'pointer', color: '#666',
-            }}
-          >
-            アクティビティログを表示
-          </button>
-          <p style={{ fontSize: 12, color: '#999', marginTop: 6 }}>
-            API通信、スクレイピング、エラーなどの詳細ログを確認できます
-          </p>
-        </section>
-      )}
+      <PersonaSettings accounts={accounts} />
     </div>
   );
 }
+
+function PersonaSettings({ accounts }: { accounts: SavedAccount[] }): React.JSX.Element {
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [content, setContent] = useState('');
+  const [loaded, setLoaded] = useState<string | null>(null); // last saved content（dirty 判定用）
+  const [hash, setHash] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // アカウント選択 → persona 取得
+  useEffect(() => {
+    if (!selectedId) return;
+    setStatus(null);
+    fetch(`${API_BASE}/accounts/${selectedId}/persona`)
+      .then(async (r) => {
+        if (r.status === 404) {
+          setContent('');
+          setLoaded('');
+          setHash(null);
+          setUpdatedAt(null);
+          return;
+        }
+        const d = await r.json();
+        setContent(d.content || '');
+        setLoaded(d.content || '');
+        setHash(d.hash || null);
+        setUpdatedAt(d.updated_at || null);
+      })
+      .catch((err) => setStatus({ kind: 'err', message: `読み込み失敗: ${err.message || err}` }));
+  }, [selectedId]);
+
+  // デフォルト選択（最初のアカウント）
+  useEffect(() => {
+    if (!selectedId && accounts.length > 0) setSelectedId(accounts[0].id);
+  }, [accounts, selectedId]);
+
+  const applyPreset = (presetContent: string) => {
+    if (content && content !== loaded) {
+      if (!confirm('未保存の変更があります。上書きしますか？')) return;
+    } else if (content) {
+      if (!confirm('既存の内容を上書きしますか？')) return;
+    }
+    setContent(presetContent);
+  };
+
+  const handleSave = async () => {
+    if (!selectedId) return;
+    if (!content.trim()) {
+      setStatus({ kind: 'err', message: 'content が空です' });
+      return;
+    }
+    if (content.length > PERSONA_CONTENT_MAX_LENGTH) {
+      setStatus({ kind: 'err', message: `長すぎます（${PERSONA_CONTENT_MAX_LENGTH}字まで）` });
+      return;
+    }
+    setSaving(true);
+    setStatus(null);
+    try {
+      const r = await fetch(`${API_BASE}/accounts/${selectedId}/persona`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${r.status}`);
+      }
+      const d = await r.json();
+      setLoaded(content);
+      setHash(d.hash);
+      setUpdatedAt(d.updated_at);
+      setStatus({ kind: 'ok', message: '保存しました' });
+      setTimeout(() => setStatus(null), 3000);
+    } catch (err) {
+      setStatus({ kind: 'err', message: `保存失敗: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const dirty = content !== (loaded ?? '');
+  const tooLong = content.length > PERSONA_CONTENT_MAX_LENGTH;
+
+  if (accounts.length === 0) {
+    return (
+      <section style={{ marginBottom: 32 }}>
+        <h2 style={{ fontSize: 18, marginBottom: 12 }}>世界観</h2>
+        <p style={{ fontSize: 13, color: '#999' }}>まずアカウントを連携してください。</p>
+      </section>
+    );
+  }
+
+  return (
+    <section style={{ marginBottom: 32 }}>
+      <h2 style={{ fontSize: 18, marginBottom: 8 }}>世界観（persona）</h2>
+      <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+        バズ自動リライト機能で使われる、アカウントの世界観（キャラ・口調・専門領域・NG）。アカウントごとに1つ保存。
+      </p>
+
+      {/* アカウント選択 */}
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>対象アカウント</label>
+        <select
+          value={selectedId}
+          onChange={(e) => setSelectedId(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', fontSize: 14, minWidth: 240 }}
+        >
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>@{a.threads_handle}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* プリセット */}
+      <div style={{ marginBottom: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button
+          onClick={() => applyPreset(EMPTY_PERSONA_TEMPLATE)}
+          style={presetBtnStyle}
+          title="空テンプレを挿入"
+        >
+          空テンプレ
+        </button>
+        {PERSONA_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => applyPreset(p.content)}
+            style={presetBtnStyle}
+            title={p.description}
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
+
+      {/* 本文 */}
+      <textarea
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder="ここに世界観の Markdown を書くか、上のプリセットから選んでください"
+        style={{
+          width: '100%', minHeight: 360, padding: 12, borderRadius: 6,
+          border: tooLong ? '1px solid #e74c3c' : '1px solid #ddd',
+          fontSize: 13, fontFamily: 'Consolas, Menlo, monospace', lineHeight: 1.6,
+          resize: 'vertical',
+        }}
+      />
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+        <span style={{ fontSize: 12, color: tooLong ? '#e74c3c' : '#999' }}>
+          {content.length.toLocaleString()} / {PERSONA_CONTENT_MAX_LENGTH.toLocaleString()} 字
+          {dirty && <span style={{ marginLeft: 10, color: '#e67e22' }}>● 未保存</span>}
+          {updatedAt && !dirty && (
+            <span style={{ marginLeft: 10 }}>最終保存: {new Date(updatedAt).toLocaleString()}</span>
+          )}
+          {hash && !dirty && (
+            <span style={{ marginLeft: 10, color: '#aaa' }} title={hash}>
+              hash: {hash.slice(0, 8)}…
+            </span>
+          )}
+        </span>
+        <button
+          onClick={handleSave}
+          disabled={saving || !dirty || tooLong || !content.trim()}
+          style={{
+            padding: '6px 18px', borderRadius: 6, border: 'none',
+            background: (saving || !dirty || tooLong || !content.trim()) ? '#ccc' : '#1a1a2e',
+            color: '#fff', fontSize: 13, cursor: (saving || !dirty || tooLong) ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {saving ? '保存中...' : '保存'}
+        </button>
+      </div>
+
+      {status && (
+        <p style={{ marginTop: 8, fontSize: 13, color: status.kind === 'ok' ? '#27ae60' : '#e74c3c' }}>
+          {status.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
+const presetBtnStyle: React.CSSProperties = {
+  padding: '5px 12px',
+  borderRadius: 6,
+  border: '1px solid #ddd',
+  background: '#fff',
+  fontSize: 12,
+  cursor: 'pointer',
+};
 
 function AssistantSettings({ onNameChange }: { onNameChange?: (name: string) => void }): React.JSX.Element {
   const [name, setName] = useState('Navi');
@@ -302,93 +469,92 @@ function AssistantSettings({ onNameChange }: { onNameChange?: (name: string) => 
   );
 }
 
-function ScraperAccountStatus(): React.JSX.Element {
-  const [status, setStatus] = useState<{ loggedIn: boolean; userId: string | null; handle: string | null; isLinkedAccount: boolean; sessionExpired?: boolean } | null>(null);
-  const [loginStatus, setLoginStatus] = useState<string | null>(null);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+function ServerSettings({ health }: { health: string }): React.JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [newUrl, setNewUrl] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [saved, setSaved] = useState(false);
 
-  const loadStatus = () => {
-    if ((window.urads as Record<string, unknown>).scraperStatus) {
-      (window.urads as Record<string, Function>).scraperStatus().then((s: typeof status) => setStatus(s)).catch(() => {});
+  const handleTest = async () => {
+    const normalized = newUrl.replace(/\/+$/, '');
+    try {
+      const parsed = new URL(normalized);
+      if (parsed.username || parsed.password) {
+        setTestResult({ ok: false, error: '認証情報を含むURLは使用できません' });
+        return;
+      }
+    } catch {
+      setTestResult({ ok: false, error: '有効なURLを入力してください' });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await (window as any).urads.configTestConnection(normalized);
+      setTestResult(result);
+    } catch {
+      setTestResult({ ok: false, error: '接続テストに失敗しました' });
+    } finally {
+      setTesting(false);
     }
   };
 
-  useEffect(() => { loadStatus(); }, []);
-
-  const handleLogin = async () => {
-    setIsLoggingIn(true);
-    setLoginStatus('ブラウザを起動中... Threadsにログインしてください');
-    try {
-      const result = await (window.urads as Record<string, Function>).scraperLogin() as {
-        ok: boolean; userId?: string; warning?: string; error?: string;
-      };
-      if (result.ok) {
-        if (result.warning) {
-          setLoginStatus(result.warning);
-        } else {
-          setLoginStatus('ログイン成功');
-        }
-        loadStatus();
-      } else {
-        setLoginStatus(`失敗: ${result.error}`);
-      }
-    } catch (err) {
-      setLoginStatus(`エラー: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setIsLoggingIn(false);
-    }
+  const handleSave = async () => {
+    const normalized = newUrl.replace(/\/+$/, '');
+    await (window as any).urads.configSetApiBase(normalized);
+    setSaved(true);
+    setEditing(false);
+    setTimeout(() => setSaved(false), 3000);
   };
 
   return (
     <section style={{ marginBottom: 32 }}>
-      <h2 style={{ fontSize: 18, marginBottom: 12 }}>リサーチ用ログイン</h2>
-      <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
-        スクレイピング（ベンチマーク、トレンド、検索）で使用するThreadsアカウントです。
-        連携アカウントと同じアカウントでログインしてください。
-      </p>
+      <h2 style={{ fontSize: 18, marginBottom: 12 }}>サーバー接続</h2>
+      <div style={{ padding: 16, borderRadius: 8, background: '#f8f9fa' }}>
+        <p>Workers API: <strong>{health}</strong></p>
 
-      <div style={{ padding: 12, borderRadius: 8, background: status?.sessionExpired ? '#fde8e8' : status?.loggedIn ? '#f0f8f0' : '#fef3f0', marginBottom: 12 }}>
-        {status?.sessionExpired ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: '#e74c3c', fontWeight: 'bold' }}>!</span>
-            <span style={{ color: '#e74c3c' }}>Cookie期限切れ - 再ログインが必要です</span>
-          </div>
-        ) : status?.loggedIn ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: status.isLinkedAccount ? '#27ae60' : '#e67e22', fontWeight: 'bold' }}>
-              {status.isLinkedAccount ? 'OK' : '!'}
-            </span>
-            <span>
-              {status.handle ? `@${status.handle}` : `ID: ${status.userId}`}
-              {' '}でログイン中
-            </span>
-            {!status.isLinkedAccount && (
-              <span style={{ color: '#e74c3c', fontSize: 12 }}>
-                （連携アカウントと不一致）
-              </span>
-            )}
+        {!editing ? (
+          <div style={{ marginTop: 12 }}>
+            <button onClick={() => { setEditing(true); setNewUrl(''); setTestResult(null); }}
+              style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid #ddd', background: 'transparent', color: '#666', fontSize: 12, cursor: 'pointer' }}>
+              サーバーを変更
+            </button>
+            {saved && <span style={{ color: '#27ae60', marginLeft: 8, fontSize: 13 }}>保存しました（再起動後に反映）</span>}
           </div>
         ) : (
-          <span style={{ color: '#e74c3c' }}>未ログイン</span>
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fff', border: '1px solid #e0e0e0' }}>
+            <p style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>Worker URL:</p>
+            <input
+              type="url" value={newUrl}
+              onChange={(e) => { setNewUrl(e.target.value); setTestResult(null); }}
+              placeholder="https://your-worker.your-subdomain.workers.dev"
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={handleTest} disabled={testing || !newUrl.trim()}
+                style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #ddd', background: '#fff', fontSize: 12, cursor: 'pointer' }}>
+                {testing ? 'テスト中...' : '接続テスト'}
+              </button>
+              {testResult?.ok && (
+                <button onClick={handleSave}
+                  style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#1a1a2e', color: '#fff', fontSize: 12, cursor: 'pointer' }}>
+                  保存
+                </button>
+              )}
+              <button onClick={() => setEditing(false)}
+                style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #ddd', background: 'transparent', color: '#999', fontSize: 12, cursor: 'pointer' }}>
+                キャンセル
+              </button>
+            </div>
+            {testResult && (
+              <p style={{ marginTop: 8, fontSize: 12, color: testResult.ok ? '#27ae60' : '#e74c3c' }}>
+                {testResult.ok ? '接続OK' : testResult.error}
+              </p>
+            )}
+          </div>
         )}
       </div>
-
-      <button
-        onClick={handleLogin}
-        disabled={isLoggingIn}
-        style={{
-          padding: '8px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
-          background: isLoggingIn ? '#ccc' : '#1a1a2e', color: '#fff', fontSize: 14,
-        }}
-      >
-        {isLoggingIn ? 'ログイン中...' : status?.loggedIn ? 'アカウントを変更' : 'Threadsにログイン'}
-      </button>
-
-      {loginStatus && (
-        <p style={{ marginTop: 8, fontSize: 13, color: loginStatus.includes('失敗') || loginStatus.includes('不一致') ? '#e74c3c' : '#27ae60' }}>
-          {loginStatus}
-        </p>
-      )}
     </section>
   );
 }

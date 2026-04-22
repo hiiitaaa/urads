@@ -1,10 +1,7 @@
-import { createLogger, hydrateFromLogFile, getEntries, getLogFilePath, onEntry, type LogFilter } from './unified-logger';
+import log from './logger';
 
-const appLog = createLogger('app');
-const errorLog = createLogger('error');
-
-process.on('uncaughtException', (err) => errorLog.error('Uncaught exception', { error: String(err), stack: (err as Error)?.stack }));
-process.on('unhandledRejection', (err) => errorLog.error('Unhandled rejection', { error: String(err) }));
+process.on('uncaughtException', (err) => log.error('Uncaught exception:', err));
+process.on('unhandledRejection', (err) => log.error('Unhandled rejection:', err));
 
 import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
 import { join } from 'path';
@@ -18,42 +15,13 @@ import { getActiveMessages } from './modules/chat/session-store';
 
 const chatQueue = new MessageQueue(processMessage);
 import { scrapeTrending, scrapeBenchmark, scrapeSearch, scrapeOwnInsights, openLoginBrowser } from './modules/scraper/feed-scraper';
-import { getScraperUserId, isAllowedUserId, saveAllowedUserId, refreshSession } from './modules/scraper/browser';
 import { execFile, type ChildProcess } from 'child_process';
 import { getApiBase } from './modules/config/api-base';
 import { setWorkersUrl, isSetupCompleted, completeSetup } from './modules/config/app-config-store';
-import { loggedFetch } from './modules/utils/logged-fetch';
+import { LocalClaudeCodeExecutor } from './modules/ai/local-executor';
+import { runBuzzRewrite, type RunBuzzRewriteInput } from './modules/ai/buzz-rewrite-orchestrator';
 
-// --- handleWithLog: 全IPCハンドラの自動計装 ---
-const ipcLog = createLogger('ipc');
-
-function summarizeArg(arg: unknown): string {
-  if (arg === undefined || arg === null) return String(arg);
-  if (typeof arg === 'string') return arg.length > 100 ? arg.slice(0, 100) + '...' : arg;
-  if (typeof arg === 'number' || typeof arg === 'boolean') return String(arg);
-  try {
-    const s = JSON.stringify(arg);
-    return s.length > 100 ? s.slice(0, 100) + '...' : s;
-  } catch {
-    return '[object]';
-  }
-}
-
-function handleWithLog(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown): void {
-  ipcMain.handle(channel, async (event, ...args) => {
-    const argSummary = args.length > 0 ? args.map(summarizeArg).join(', ') : '';
-    ipcLog.info(`invoke: ${channel}`, argSummary ? { args: argSummary } : undefined);
-    const start = Date.now();
-    try {
-      const result = await handler(event, ...args);
-      ipcLog.debug(`result: ${channel}`, { ms: Date.now() - start });
-      return result;
-    } catch (err) {
-      ipcLog.error(`failed: ${channel}`, { ms: Date.now() - start, error: String(err) });
-      throw err;
-    }
-  });
-}
+const aiExecutor = new LocalClaudeCodeExecutor();
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -81,73 +49,71 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
-
-  // リアルタイムログ配信
-  onEntry((entry) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('logs:push', entry);
-    }
-  });
 }
 
-// --- ログ関連IPC ---
-handleWithLog('logs:get', async (_event, filter?: LogFilter) => {
-  return getEntries(filter as LogFilter | undefined);
-});
-
-handleWithLog('logs:getFilePath', async () => {
-  return getLogFilePath();
-});
-
-handleWithLog('logs:logAction', async (_event, action: string, detail?: unknown) => {
-  const uiLog = createLogger('ui');
-  uiLog.info(action as string, detail);
-  return { ok: true };
-});
-
-// --- IPC: Threads OAuth認証 ---
-handleWithLog('threads:auth', async () => {
-  const urlRes = await loggedFetch(`${getApiBase()}/license/auth-url`);
-  const { url: authUrl, redirect_uri: redirectUri } = await urlRes.json() as {
+// IPC: Threads OAuth認証
+// 1. Workers から認可URLを取得
+// 2. BrowserWindow で認可コード取得
+// 3. Workers にコードを送ってトークン交換+保存
+ipcMain.handle('threads:auth', async () => {
+  // 1. 認可URL取得
+  const apiBase = getApiBase();
+  log.info(`[threads:auth] Step 1: Fetching auth URL from ${apiBase}/license/auth-url`);
+  const urlRes = await net.fetch(`${apiBase}/license/auth-url`);
+  log.info(`[threads:auth] Step 1 response: ${urlRes.status} ${urlRes.statusText}`);
+  const authData = await urlRes.json() as {
     url: string; state: string; redirect_uri: string;
   };
+  log.info(`[threads:auth] Step 1 data: redirect_uri=${authData.redirect_uri}, hasUrl=${!!authData.url}`);
 
-  const code = await openAuthWindow(authUrl, redirectUri);
+  // 2. 認可コード取得
+  log.info('[threads:auth] Step 2: Opening auth window');
+  const code = await openAuthWindow(authData.url, authData.redirect_uri);
+  log.info(`[threads:auth] Step 2: Got auth code (length=${code.length})`);
 
-  const exchangeRes = await loggedFetch(`${getApiBase()}/license/exchange`, {
+  // 3. Workers でトークン交換+D1保存
+  log.info('[threads:auth] Step 3: Exchanging code for token');
+  const exchangeRes = await net.fetch(`${apiBase}/license/exchange`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
   });
+  log.info(`[threads:auth] Step 3 response: ${exchangeRes.status} ${exchangeRes.statusText}`);
 
   if (!exchangeRes.ok) {
     const err = await exchangeRes.json() as { error: string };
+    log.error(`[threads:auth] Exchange failed: ${JSON.stringify(err)}`);
     throw new Error(err.error);
   }
 
-  return exchangeRes.json();
+  const result = await exchangeRes.json();
+  log.info('[threads:auth] Auth completed successfully');
+  return result;
 });
 
-// --- IPC: アカウント ---
-handleWithLog('threads:getAccounts', async () => {
-  const response = await loggedFetch(`${getApiBase()}/accounts`);
+// IPC: 保存済みアカウント一覧を取得
+ipcMain.handle('threads:getAccounts', async () => {
+  log.info(`[threads:getAccounts] Fetching from ${getApiBase()}/accounts`);
+  const response = await net.fetch(`${getApiBase()}/accounts`);
+  log.info(`[threads:getAccounts] Response: ${response.status}`);
   const data = await response.json() as { accounts: unknown[] };
+  log.info(`[threads:getAccounts] Got ${data.accounts?.length ?? 0} accounts`);
   return data.accounts;
 });
 
-handleWithLog('threads:deleteAccount', async (_event, accountId: unknown) => {
-  await loggedFetch(`${getApiBase()}/accounts/${accountId}`, { method: 'DELETE' });
+// IPC: アカウント削除
+ipcMain.handle('threads:deleteAccount', async (_event, accountId: string) => {
+  await net.fetch(`${getApiBase()}/accounts/${accountId}`, { method: 'DELETE' });
   return { deleted: true };
 });
 
-// --- IPC: ollama ---
+// IPC: ollama テキスト生成（ローカルLLM）
 let ollamaProcess: ChildProcess | null = null;
 
-handleWithLog('ai:generate:ollama', async (_event, opts: unknown) => {
-  const { prompt, model } = opts as { prompt: string; model?: string };
+ipcMain.handle('ai:generate:ollama', async (_event, opts: { prompt: string; model?: string }) => {
   return new Promise((resolve, reject) => {
     ollamaProcess = execFile(
-      'ollama', ['run', model || 'llama3', prompt],
+      'ollama', ['run', opts.model || 'llama3', opts.prompt],
       { encoding: 'utf-8', timeout: 120000, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
         ollamaProcess = null;
@@ -165,7 +131,8 @@ handleWithLog('ai:generate:ollama', async (_event, opts: unknown) => {
   });
 });
 
-handleWithLog('ai:generate:cancel', async () => {
+// IPC: ollama 生成キャンセル
+ipcMain.handle('ai:generate:cancel', async () => {
   if (ollamaProcess) {
     ollamaProcess.kill();
     ollamaProcess = null;
@@ -174,7 +141,8 @@ handleWithLog('ai:generate:cancel', async () => {
   return { cancelled: false };
 });
 
-handleWithLog('ai:ollama:check', async () => {
+// IPC: ollama 可用性チェック
+ipcMain.handle('ai:ollama:check', async () => {
   return new Promise((resolve) => {
     execFile('ollama', ['--version'], { timeout: 5000 }, (error, stdout) => {
       if (error) {
@@ -186,32 +154,40 @@ handleWithLog('ai:ollama:check', async () => {
   });
 });
 
-// --- IPC: チャットエージェント ---
-handleWithLog('chat:sendMessage', async (_event, payload: unknown) => {
-  return chatQueue.enqueue(payload as { message?: string; skill?: string });
+// IPC: チャットエージェント（V2セッション管理 + スキル + キュー）
+ipcMain.handle('chat:sendMessage', async (_event, payload: { message?: string; skill?: string }) => {
+  return chatQueue.enqueue(payload);
 });
 
-handleWithLog('chat:listSkills', async () => {
+ipcMain.handle('chat:listSkills', async () => {
   return listSkills();
 });
 
-handleWithLog('chat:getHistory', async () => {
+ipcMain.handle('chat:getHistory', async () => {
   return getActiveMessages();
 });
 
-handleWithLog('chat:cancelMessage', async () => {
+ipcMain.handle('chat:cancelMessage', async () => {
   cancelMessage();
   return { cancelled: true };
 });
 
-handleWithLog('chat:getSessionInfo', async () => {
+ipcMain.handle('ai:runBuzzRewrite', async (_event, input: RunBuzzRewriteInput) => {
+  if (!input || typeof input.scraped_post_id !== 'string' || typeof input.account_id !== 'string') {
+    return { ok: false, skipped: false, error: 'scraped_post_id と account_id が必要です' };
+  }
+  return runBuzzRewrite(aiExecutor, input);
+});
+
+ipcMain.handle('chat:getSessionInfo', async () => {
   return getSessionInfo();
 });
 
-// --- IPC: メディアアップロード ---
+// IPC: メディアアップロード
+// メディアはThreads APIがダウンロードできる公開URLが必要なため、本番Workersに直接アップロード
 const MEDIA_ARCHIVE_DIR = join(app.getPath('userData'), 'media-archive');
 
-handleWithLog('media:pickFiles', async () => {
+ipcMain.handle('media:pickFiles', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
     filters: [
@@ -224,11 +200,10 @@ handleWithLog('media:pickFiles', async () => {
   return { files: result.filePaths };
 });
 
-handleWithLog('media:upload', async (_event, filePath: unknown) => {
+ipcMain.handle('media:upload', async (_event, filePath: string) => {
   try {
-    const fp = filePath as string;
-    const fileData = readFileSync(fp);
-    const fileName = fp.split(/[/\\]/).pop() || 'file';
+    const fileData = readFileSync(filePath);
+    const fileName = filePath.split(/[/\\]/).pop() || 'file';
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
 
     const mimeMap: Record<string, string> = {
@@ -238,10 +213,11 @@ handleWithLog('media:upload', async (_event, filePath: unknown) => {
     };
     const contentType = mimeMap[ext] || 'application/octet-stream';
 
+    // FormDataでアップロード
     const formData = new FormData();
     formData.append('file', new Blob([fileData], { type: contentType }), fileName);
 
-    const res = await loggedFetch(`${getApiBase()}/media/upload`, {
+    const res = await net.fetch(`${getApiBase()}/media/upload`, {
       method: 'POST',
       body: formData as unknown as BodyInit,
     });
@@ -253,11 +229,12 @@ handleWithLog('media:upload', async (_event, filePath: unknown) => {
 
     const data = await res.json() as { key: string; url: string; size: number; type: string };
 
+    // ローカルアーカイブにコピー
     const archiveDir = join(MEDIA_ARCHIVE_DIR, data.key.replace(/[/\\]/g, '_'));
     if (!existsSync(MEDIA_ARCHIVE_DIR)) mkdirSync(MEDIA_ARCHIVE_DIR, { recursive: true });
     if (!existsSync(archiveDir)) mkdirSync(archiveDir, { recursive: true });
     const archivePath = join(archiveDir, fileName);
-    copyFileSync(fp, archivePath);
+    copyFileSync(filePath, archivePath);
 
     return { ok: true, ...data, localArchivePath: archivePath };
   } catch (err) {
@@ -265,349 +242,105 @@ handleWithLog('media:upload', async (_event, filePath: unknown) => {
   }
 });
 
-handleWithLog('media:delete', async (_event, key: unknown) => {
+ipcMain.handle('media:delete', async (_event, key: string) => {
   try {
-    await loggedFetch(`${getApiBase()}/media/${key}`, { method: 'DELETE' });
+    await net.fetch(`${getApiBase()}/media/${key}`, { method: 'DELETE' });
     return { ok: true };
   } catch {
     return { ok: false };
   }
 });
 
-// --- IPC: スクレイパー ---
+// IPC: スクレイパー（レートリミット + 同時起動防止）
 let scrapeHistory: number[] = [];
 let scraperBusy = false;
-let scraperBusyTask = '';
-let scraperSessionExpired = false;
-const scraperLog = createLogger('scraper');
 
-function scraperBusyError(): { ok: false; error: string } {
-  return { ok: false, error: `${scraperBusyTask || 'スクレイプ'}が実行中です。完了を待ってください。` };
-}
-
-/**
- * 許可されたアカウントでスクレイパーがログインしているか検証
- * ローカル許可リストで照合（オフラインでも動作）
- */
-function verifyScraperAccount(): { ok: true } | { ok: false; error: string } {
-  if (scraperSessionExpired) {
-    return { ok: false, error: 'Cookie期限切れ。設定→リサーチ用ログインから再ログインしてください。' };
-  }
-
-  const scraperUserId = getScraperUserId();
-  if (!scraperUserId) {
-    return { ok: false, error: 'スクレイパー未ログイン。設定→リサーチ用ログインからログインしてください。' };
-  }
-
-  if (!isAllowedUserId(scraperUserId)) {
-    return { ok: false, error: `スクレイパーのアカウント(ID:${scraperUserId})は許可されていません。設定→リサーチ用ログインから連携アカウントでログインしてください。` };
-  }
-
-  return { ok: true };
-}
-
-// スクレイパーのログイン状態を返す
-handleWithLog('scraper:status', async () => {
-  const scraperUserId = getScraperUserId();
-  if (!scraperUserId) return { loggedIn: false, userId: null, handle: null, isLinkedAccount: false, sessionExpired: scraperSessionExpired };
-
-  // 連携アカウントと照合してハンドル名を返す
+ipcMain.handle('scraper:login', async () => {
+  if (scraperBusy) return { ok: false, error: '別のスクレイプが実行中です。完了を待ってください。' };
+  scraperBusy = true;
   try {
-    const res = await loggedFetch(`${getApiBase()}/accounts`);
-    const data = await res.json() as { accounts: Array<{ threads_user_id: string; threads_handle: string }> };
-    const match = (data.accounts || []).find(a => a.threads_user_id === scraperUserId);
-    return { loggedIn: true, userId: scraperUserId, handle: match?.threads_handle || null, isLinkedAccount: !!match, sessionExpired: scraperSessionExpired };
-  } catch {
-    return { loggedIn: true, userId: scraperUserId, handle: null, isLinkedAccount: isAllowedUserId(scraperUserId), sessionExpired: scraperSessionExpired };
-  }
-});
-
-handleWithLog('scraper:login', async () => {
-  if (scraperBusy) return scraperBusyError();
-  scraperBusy = true; scraperBusyTask = 'Threadsログイン';
-  try {
-    const result = await openLoginBrowser();
-    if (!result.ok) return result;
-
-    // ログインしたアカウントのuser_idを取得
-    const userId = result.userId;
-
-    // 連携アカウントと照合
-    let warning: string | undefined;
-    try {
-      const res = await loggedFetch(`${getApiBase()}/accounts`);
-      const data = await res.json() as { accounts: Array<{ threads_user_id: string; threads_handle: string }> };
-      const accounts = data.accounts || [];
-      const match = accounts.find(a => a.threads_user_id === userId);
-
-      if (match) {
-        // 連携アカウントと一致 → 許可リストに追加
-        saveAllowedUserId(userId);
-      } else if (accounts.length > 0) {
-        // 不一致 → 警告
-        const handles = accounts.map(a => `@${a.threads_handle}`).join(', ');
-        warning = `ログインアカウント(ID:${userId})は連携アカウント(${handles})と異なります。連携アカウントでログインし直してください。`;
-        scraperLog.warn(`スクレイパーログイン: アカウント不一致 (user_id=${userId})`);
-      } else {
-        // 連携アカウントなし（初回セットアップ）→ そのまま許可
-        saveAllowedUserId(userId);
-      }
-    } catch {
-      // API接続失敗（初回セットアップ、オフライン）→ そのまま許可
-      saveAllowedUserId(userId);
-    }
-
-    scraperSessionExpired = false;
-    return { ok: true, userId, warning };
+    return await openLoginBrowser();
   } finally {
-    scraperBusy = false; scraperBusyTask = '';
+    scraperBusy = false;
   }
 });
 
-handleWithLog('scraper:benchmark', async (_event, handle: unknown, benchmarkId: unknown) => {
-  if (scraperBusy) return scraperBusyError();
-  const verify = await verifyScraperAccount();
-  if (!verify.ok) return { ok: false, error: verify.error };
-  scraperBusy = true; scraperBusyTask = 'ベンチマーク取得';
+ipcMain.handle('scraper:benchmark', async (_event, handle: string, benchmarkId: string) => {
+  if (scraperBusy) return { ok: false, error: '別のスクレイプが実行中です。' };
+  scraperBusy = true;
   try {
-    return await scrapeBenchmark(handle as string, benchmarkId as string);
+    return await scrapeBenchmark(handle, benchmarkId);
   } finally {
-    scraperBusy = false; scraperBusyTask = '';
+    scraperBusy = false;
   }
 });
 
-handleWithLog('insights:refresh', async (_event, handle: unknown, accountId: unknown) => {
-  if (scraperBusy) return scraperBusyError();
-  const verify = await verifyScraperAccount();
-  if (!verify.ok) return { ok: false, error: verify.error };
-  scraperBusy = true; scraperBusyTask = 'Insights更新';
+// IPC: 自分のInsights取得
+ipcMain.handle('insights:refresh', async (_event, handle: string, accountId: string) => {
+  if (scraperBusy) return { ok: false, error: '別のスクレイプが実行中です。' };
+  scraperBusy = true;
   try {
-    return await scrapeOwnInsights(handle as string, accountId as string);
+    return await scrapeOwnInsights(handle, accountId);
   } finally {
-    scraperBusy = false; scraperBusyTask = '';
+    scraperBusy = false;
   }
 });
 
-// 起動時自動Insightsリフレッシュ
+// 起動時自動Insightsリフレッシュ（6時間以上経過していたら）
 async function autoRefreshInsights(): Promise<void> {
+  if (!isSetupCompleted() || !getApiBase()) return;
   try {
-    const accRes = await loggedFetch(`${getApiBase()}/accounts`);
+    const accRes = await net.fetch(`${getApiBase()}/accounts`);
     const accData = await accRes.json() as { accounts: Array<{ id: string; threads_handle: string }> };
     if (!accData.accounts || accData.accounts.length === 0) return;
 
     const acc = accData.accounts[0];
-    const checkRes = await loggedFetch(
+    const checkRes = await net.fetch(
       `${getApiBase()}/posts/insights/last-check?account_id=${acc.id}`
     );
     const checkData = await checkRes.json() as { last_check: number };
 
     const SIX_HOURS = 6 * 60 * 60 * 1000;
     if (Date.now() - (checkData.last_check || 0) > SIX_HOURS) {
-      if (scraperBusy) {
-        appLog.info('Auto-refresh insights: スクレイプ実行中のためスキップ');
-        return;
-      }
-      scraperBusy = true; scraperBusyTask = 'Insights自動更新';
-      appLog.info('Auto-refresh insights: starting...');
-      try {
-        const result = await scrapeOwnInsights(acc.threads_handle, acc.id);
-        appLog.info(`Auto-refresh insights: ${result.ok ? `${(result as { saved: number }).saved} saved` : (result as { error: string }).error}`);
-      } finally {
-        scraperBusy = false; scraperBusyTask = '';
-      }
+      log.info('Auto-refresh insights: starting...');
+      const result = await scrapeOwnInsights(acc.threads_handle, acc.id);
+      log.info(`Auto-refresh insights: ${result.ok ? `${(result as { saved: number }).saved} saved` : (result as { error: string }).error}`);
     }
   } catch (err) {
-    appLog.warn('Auto-refresh insights failed', { error: String(err) });
+    log.warn('Auto-refresh insights failed:', err);
   }
 }
 
-// --- 定時リサーチスケジューラー ---
-let scheduledResearchTimer: ReturnType<typeof setTimeout> | null = null;
-let researchSchedule = { enabled: false, hour: 9, minute: 0, types: ['trending'] as string[] };
-
-function startResearchScheduler(): void {
-  if (scheduledResearchTimer) clearTimeout(scheduledResearchTimer);
-  if (!researchSchedule.enabled) return;
-
-  const now = new Date();
-  const target = new Date();
-  target.setHours(researchSchedule.hour, researchSchedule.minute, 0, 0);
-
-  // If the target time has passed today, schedule for tomorrow
-  if (target.getTime() <= now.getTime()) {
-    target.setDate(target.getDate() + 1);
-  }
-
-  const delay = target.getTime() - now.getTime();
-  appLog.info(`定時リサーチ: 次回 ${target.toLocaleString('ja-JP')} (${Math.floor(delay / 60000)}分後)`);
-
-  scheduledResearchTimer = setTimeout(async () => {
-    appLog.info('定時リサーチ: 実行開始');
-    try {
-      if (scraperBusy) {
-        appLog.warn('定時リサーチ: 別のスクレイプが実行中のためスキップ');
-      } else {
-        for (const type of researchSchedule.types) {
-          if (scraperBusy) break;
-          // ランダム遅延（1-5分）で人間らしく
-          const jitter = Math.floor(Math.random() * 4 * 60 * 1000) + 60000;
-          await new Promise(r => setTimeout(r, jitter));
-
-          if (type === 'trending') {
-            scraperBusy = true;
-            try {
-              const result = await scrapeTrending();
-              appLog.info(`定時リサーチ(トレンド): ${result.ok ? `${(result as any).posts?.length || 0}件` : (result as any).error}`);
-            } finally {
-              scraperBusy = false; scraperBusyTask = '';
-            }
-          } else if (type === 'insights') {
-            scraperBusy = true;
-            try {
-              const accRes = await loggedFetch(`${getApiBase()}/accounts`);
-              const accData = await accRes.json() as { accounts: Array<{ id: string; threads_handle: string }> };
-              if (accData.accounts?.[0]) {
-                const acc = accData.accounts[0];
-                const result = await scrapeOwnInsights(acc.threads_handle, acc.id);
-                appLog.info(`定時リサーチ(Insights): ${result.ok ? `${(result as any).saved}件保存` : (result as any).error}`);
-              }
-            } finally {
-              scraperBusy = false; scraperBusyTask = '';
-            }
-          } else if (type === 'benchmark') {
-            // 全ベンチマークを日次スクレイプ
-            try {
-              const bmRes = await loggedFetch(`${getApiBase()}/research/benchmarks`);
-              const bmData = await bmRes.json() as { benchmarks: Array<{ id: string; threads_handle: string; status: string; last_scraped_at: number | null }> };
-              const benchmarks = (bmData.benchmarks || []).filter(b => b.status === 'active');
-
-              for (const bm of benchmarks) {
-                if (scraperBusy) break;
-                // 24時間以内にスクレイプ済みならスキップ
-                if (bm.last_scraped_at && Date.now() - bm.last_scraped_at < 24 * 60 * 60 * 1000) continue;
-
-                scraperBusy = true; scraperBusyTask = `日次ベンチマーク@${bm.threads_handle}`;
-                try {
-                  const result = await scrapeBenchmark(bm.threads_handle, bm.id, 'daily');
-                  appLog.info(`定時リサーチ(ベンチマーク): @${bm.threads_handle} ${result.ok ? `${(result as any).posts?.length || 0}件` : (result as any).error}`);
-                } finally {
-                  scraperBusy = false; scraperBusyTask = '';
-                }
-                // ベンチマーク間にランダム遅延（30-90秒）
-                await new Promise(r => setTimeout(r, 30000 + Math.random() * 60000));
-              }
-            } catch (err) {
-              appLog.error('定時リサーチ(ベンチマーク): 失敗', { error: String(err) });
-            }
-          }
-        }
-      }
-    } catch (err) {
-      appLog.error('定時リサーチ: 失敗', { error: String(err) });
-    }
-    // 次の日のスケジュール
-    startResearchScheduler();
-  }, delay);
-}
-
-/** D1からスケジュール設定を読み込み */
-async function loadScheduleFromD1(): Promise<void> {
-  try {
-    const res = await loggedFetch(`${getApiBase()}/research/settings`);
-    const data = await res.json() as {
-      schedule_enabled?: number; schedule_hour?: number; schedule_minute?: number; schedule_types?: string;
-    };
-    researchSchedule = {
-      enabled: !!data.schedule_enabled,
-      hour: data.schedule_hour ?? 9,
-      minute: data.schedule_minute ?? 0,
-      types: (() => { try { return JSON.parse(data.schedule_types || '["trending"]'); } catch { return ['trending']; } })(),
-    };
-    appLog.info(`スケジュール設定読み込み: ${researchSchedule.enabled ? `${researchSchedule.hour}:${String(researchSchedule.minute).padStart(2, '0')} [${researchSchedule.types.join(',')}]` : '無効'}`);
-  } catch {
-    appLog.debug('スケジュール設定読み込み失敗（デフォルト使用）');
-  }
-}
-
-handleWithLog('research:getSchedule', async () => {
-  return researchSchedule;
-});
-
-handleWithLog('research:setSchedule', async (_event, schedule: unknown) => {
-  const s = schedule as { enabled: boolean; hour: number; minute: number; types: string[] };
-  researchSchedule = {
-    enabled: !!s.enabled,
-    hour: Math.max(0, Math.min(23, s.hour || 0)),
-    minute: Math.max(0, Math.min(59, s.minute || 0)),
-    types: Array.isArray(s.types) ? s.types.filter(t => ['trending', 'insights', 'benchmark'].includes(t)) : ['trending'],
-  };
-  startResearchScheduler();
-
-  // D1に永続化
-  try {
-    await loggedFetch(`${getApiBase()}/research/settings`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        schedule_enabled: researchSchedule.enabled ? 1 : 0,
-        schedule_hour: researchSchedule.hour,
-        schedule_minute: researchSchedule.minute,
-        schedule_types: JSON.stringify(researchSchedule.types),
-      }),
-    });
-  } catch { /* 永続化失敗は無視 */ }
-
-  return { ok: true, schedule: researchSchedule };
-});
-
-// 検索専用カウンター
+// 検索専用カウンター（トレンドとは別、cooldownなし）
 let searchHistory: number[] = [];
 
-handleWithLog('scraper:search', async (_event, query: unknown) => {
-  const q = query as string;
-  if (scraperBusy) return scraperBusyError();
-  if (!q || q.length < 2) return { ok: false, error: '検索キーワードは2文字以上必要です。' };
-  const verify = await verifyScraperAccount();
-  if (!verify.ok) return { ok: false, error: verify.error };
+ipcMain.handle('scraper:search', async (_event, query: string) => {
+  if (scraperBusy) return { ok: false, error: '別のスクレイプが実行中です。' };
+  if (!query || query.length < 2) return { ok: false, error: '検索キーワードは2文字以上必要です。' };
 
   const now = Date.now();
   const ONE_DAY = 24 * 60 * 60 * 1000;
   searchHistory = searchHistory.filter((t) => now - t < ONE_DAY);
 
   if (searchHistory.length >= 10) {
-    scraperLog.warn(`検索上限到達: ${searchHistory.length}/10`);
     return { ok: false, error: `1日の検索上限（10回）に達しています（${searchHistory.length}/10）。` };
   }
 
-  scraperBusy = true; scraperBusyTask = `キーワード検索「${q}」`;
+  scraperBusy = true;
   try {
-    // リサーチ設定からスクロール量+フィルタを取得
-    let scrollRounds = 3;
-    let maxResults = 50;
-    let minLikes = 0;
-    try {
-      const settingsRes = await loggedFetch(`${getApiBase()}/research/settings`);
-      const settings = await settingsRes.json() as { max_pages?: number; search_max_results?: number; search_min_likes?: number };
-      scrollRounds = Math.max(2, Math.min(5, (settings.max_pages || 2) + 1));
-      maxResults = settings.search_max_results || 50;
-      minLikes = settings.search_min_likes || 0;
-    } catch { /* デフォルト使用 */ }
-
-    const result = await scrapeSearch(q, scrollRounds, maxResults, minLikes);
+    const result = await scrapeSearch(query);
     if (result.ok) {
       searchHistory.push(now);
     }
     const remaining = 10 - searchHistory.filter((t) => Date.now() - t < ONE_DAY).length;
     return { ...result, remaining, used: 10 - remaining };
   } finally {
-    scraperBusy = false; scraperBusyTask = '';
+    scraperBusy = false;
   }
 });
 
-handleWithLog('scraper:trending', async () => {
-  if (scraperBusy) return scraperBusyError();
-  const verify = await verifyScraperAccount();
-  if (!verify.ok) return { ok: false, error: verify.error };
+ipcMain.handle('scraper:trending', async () => {
+  if (scraperBusy) return { ok: false, error: '別のスクレイプが実行中です。完了を待ってください。' };
 
   const now = Date.now();
   const ONE_DAY = 24 * 60 * 60 * 1000;
@@ -616,7 +349,6 @@ handleWithLog('scraper:trending', async () => {
   scrapeHistory = scrapeHistory.filter((t) => now - t < ONE_DAY);
 
   if (scrapeHistory.length >= 5) {
-    scraperLog.warn(`トレンド上限到達: ${scrapeHistory.length}/5`);
     return { ok: false, error: `1日のスクレイプ上限（5回）に達しています（${scrapeHistory.length}/5）。明日再度お試しください。` };
   }
 
@@ -626,124 +358,82 @@ handleWithLog('scraper:trending', async () => {
     return { ok: false, error: `前回のスクレイプから${waitMin}分待ってください（最低30分間隔）。残り${scrapeHistory.length}/5回。` };
   }
 
-  scraperBusy = true; scraperBusyTask = 'トレンド取得';
+  scraperBusy = true;
   try {
     const result = await scrapeTrending();
 
+    // 成功した場合のみカウント消費
     if (result.ok) {
       scrapeHistory.push(now);
-      scraperLog.info(`トレンド取得成功: ${result.posts?.length || 0}件`, { usage: `${scrapeHistory.length}/5` });
+      log.info(`Scrape success: ${result.posts?.length || 0} posts. Usage: ${scrapeHistory.length}/5`);
     } else {
-      scraperLog.warn(`トレンド取得失敗（カウント消費なし）`, { error: result.error });
+      log.warn(`Scrape failed (not counted): ${result.error}`);
     }
 
+    // 残り回数を結果に付与
     const remaining = 5 - scrapeHistory.filter((t) => Date.now() - t < 24 * 60 * 60 * 1000).length;
     return { ...result, remaining, used: 5 - remaining };
   } finally {
-    scraperBusy = false; scraperBusyTask = '';
+    scraperBusy = false;
   }
 });
 
-handleWithLog('chat:clearHistory', async () => {
+ipcMain.handle('chat:clearHistory', async () => {
   await clearHistory();
   return { cleared: true };
 });
 
-// --- IPC: 外部URL ---
-handleWithLog('app:openExternal', async (_event, url: unknown) => {
-  const u = String(url);
-  // Only allow threads.net URLs for safety
-  if (u.startsWith('https://www.threads.net/')) {
-    shell.openExternal(u);
-    return { ok: true };
-  }
-  return { ok: false, error: 'URLが許可されていません' };
-});
+// IPC: アプリ設定（セットアップウィザード用）
+ipcMain.handle('config:getApiBase', () => getApiBase());
 
-// --- IPC: アプリ設定 ---
-handleWithLog('config:getApiBase', () => getApiBase());
-
-handleWithLog('config:setApiBase', async (_event, url: unknown) => {
-  setWorkersUrl(url as string);
+ipcMain.handle('config:setApiBase', async (_event, url: string) => {
+  validateUrl(url);
+  setWorkersUrl(url);
   return { ok: true };
 });
 
-handleWithLog('config:isSetupCompleted', () => isSetupCompleted());
+ipcMain.handle('config:isSetupCompleted', () => isSetupCompleted());
 
-handleWithLog('config:completeSetup', () => {
+ipcMain.handle('config:completeSetup', () => {
   completeSetup();
   return { ok: true };
 });
 
-handleWithLog('config:testConnection', async (_event, url: unknown) => {
+/** URL安全性チェック（IPC経由の入力をバリデーション） */
+function validateUrl(url: string): void {
+  const parsed = new URL(url);
+  if (parsed.username || parsed.password) {
+    throw new Error('認証情報を含むURLは使用できません');
+  }
+  const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  if (parsed.protocol !== 'https:' && !isLocalhost) {
+    throw new Error('URLは https:// で始まる必要があります（localhost は http 可）');
+  }
+}
+
+ipcMain.handle('config:testConnection', async (_event, url: string) => {
+  log.info(`[config:testConnection] Testing: ${url}`);
   try {
-    const res = await loggedFetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+    validateUrl(url);
+    const res = await net.fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+    log.info(`[config:testConnection] Response: ${res.status}`);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const data = await res.json() as { status: string; timestamp: number };
+    log.info(`[config:testConnection] OK: ${JSON.stringify(data)}`);
     return { ok: true, timestamp: data.timestamp };
   } catch (err) {
+    log.error(`[config:testConnection] Failed: ${err}`);
     return { ok: false, error: err instanceof Error ? err.message : 'タイムアウト' };
   }
 });
 
-// --- アプリライフサイクル ---
 app.whenReady().then(() => {
-  hydrateFromLogFile();
-  appLog.info('App started', { version: app.getVersion(), platform: process.platform });
   createWindow();
-  appLog.info('Main window created');
-  // 起動10秒後: Cookie自動延長（1日1回）
-  setTimeout(async () => {
-    if (scraperBusy) return;
-    scraperBusy = true; scraperBusyTask = 'Cookie延長';
-    try {
-      const result = await refreshSession();
-      if (result.ok && !result.authenticated) {
-        scraperSessionExpired = true;
-        appLog.warn('Cookie期限切れ: 再ログインが必要');
-      }
-    } catch { /* 起動ブロックしない */ }
-    finally { scraperBusy = false; scraperBusyTask = ''; }
-  }, 10000);
-  // 起動20秒後: ベンチマーク日次キャッチアップ
-  setTimeout(async () => {
-    try {
-      const bmRes = await loggedFetch(`${getApiBase()}/research/benchmarks`);
-      const bmData = await bmRes.json() as { benchmarks: Array<{ id: string; threads_handle: string; status: string; last_scraped_at: number | null }> };
-      const stale = (bmData.benchmarks || []).filter(b =>
-        b.status === 'active' && (!b.last_scraped_at || Date.now() - b.last_scraped_at > 24 * 60 * 60 * 1000)
-      );
-      if (stale.length === 0) return;
-
-      appLog.info(`ベンチマークキャッチアップ: ${stale.length}件の更新が必要`);
-      for (const bm of stale) {
-        if (scraperBusy) { appLog.info('ベンチマークキャッチアップ: 他のスクレイプ実行中、待機'); break; }
-
-        const verify = verifyScraperAccount();
-        if (!verify.ok) { appLog.warn(`ベンチマークキャッチアップ: ${verify.error}`); break; }
-
-        scraperBusy = true; scraperBusyTask = `キャッチアップ@${bm.threads_handle}`;
-        try {
-          const result = await scrapeBenchmark(bm.threads_handle, bm.id, 'daily');
-          appLog.info(`キャッチアップ: @${bm.threads_handle} ${result.ok ? `${(result as any).posts?.length || 0}件` : (result as any).error}`);
-        } finally {
-          scraperBusy = false; scraperBusyTask = '';
-        }
-        // ベンチマーク間30-90秒ランダム遅延
-        await new Promise(r => setTimeout(r, 30000 + Math.random() * 60000));
-      }
-    } catch (err) {
-      appLog.debug('ベンチマークキャッチアップ失敗', { error: String(err) });
-    }
-  }, 20000);
-  // 起動30秒後: Insights自動更新
+  // 起動30秒後にInsights自動リフレッシュ（Dockerが起動するのを待つ）
   setTimeout(() => autoRefreshInsights().catch(() => {}), 30000);
-  // 起動5秒後: スケジュール設定読み込み
-  setTimeout(() => loadScheduleFromD1().then(() => startResearchScheduler()).catch(() => {}), 5000);
 });
 
 app.on('window-all-closed', () => {
-  appLog.info('All windows closed');
   if (process.platform !== 'darwin') {
     app.quit();
   }

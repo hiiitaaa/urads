@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('urads', {
   chatCancelMessage: () => ipcRenderer.invoke('chat:cancelMessage'),
   chatClearHistory: () => ipcRenderer.invoke('chat:clearHistory'),
 
+  // バズ自動リライト（手動トリガー）
+  aiRunBuzzRewrite: (input: { scraped_post_id: string; account_id: string }) =>
+    ipcRenderer.invoke('ai:runBuzzRewrite', input),
+
   // ファイルパス取得（Electron 32+でfile.pathが削除されたため必要）
   getFilePath: (file: File) => webUtils.getPathForFile(file),
 

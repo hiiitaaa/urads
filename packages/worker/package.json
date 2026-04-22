@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev --local --persist-to .wrangler/state --ip 0.0.0.0",
     "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply urads-db --local"
+    "db:migrate": "wrangler d1 migrations apply urads-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply urads-db --remote"
   },
   "dependencies": {
     "hono": "^4.7.0",

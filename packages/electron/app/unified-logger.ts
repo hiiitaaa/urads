@@ -5,7 +5,7 @@
 import log from './logger';
 import { readFileSync } from 'fs';
 
-export type LogCategory = 'api' | 'scraper' | 'ipc' | 'auth' | 'app' | 'chat' | 'config' | 'ui' | 'error';
+export type LogCategory = 'api' | 'scraper' | 'ipc' | 'auth' | 'app' | 'chat' | 'config' | 'ui' | 'error' | 'ai';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {

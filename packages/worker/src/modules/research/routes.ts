@@ -302,6 +302,30 @@ researchRoutes.post('/benchmarks/:id/scrape', async (c) => {
   });
 });
 
+// GET /research/scraped-posts/:id — 単体取得（benchmark と join して threads_handle も返す）
+researchRoutes.get('/scraped-posts/:id', async (c) => {
+  const licenseId = getLicenseId(c);
+  const spId = c.req.param('id');
+
+  const row = await c.env.DB.prepare(
+    `SELECT sp.*, b.threads_handle AS benchmark_handle, b.license_id AS benchmark_license_id
+     FROM scraped_posts sp
+     INNER JOIN benchmarks b ON sp.benchmark_id = b.id
+     WHERE sp.id = ?`
+  ).bind(spId).first<Record<string, unknown>>();
+
+  if (!row) {
+    return c.json({ code: 'NOT_FOUND', message: 'スクレイプ投稿が見つかりません' }, 404);
+  }
+  if (row.benchmark_license_id !== licenseId) {
+    return c.json({ code: 'FORBIDDEN', message: 'このスクレイプ投稿へのアクセス権がありません' }, 403);
+  }
+
+  // license_id をレスポンスから落とす
+  const { benchmark_license_id: _, ...safe } = row;
+  return c.json({ post: safe });
+});
+
 // GET /research/benchmarks/:id/posts — 収集投稿一覧（Fix 1: license_idチェック）
 researchRoutes.get('/benchmarks/:id/posts', async (c) => {
   const licenseId = getLicenseId(c);

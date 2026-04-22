@@ -27,3 +27,14 @@ export interface AccountUIState {
 }
 
 export type AccountSummary = Pick<Account, 'id' | 'threads_handle' | 'display_name'>;
+
+export interface AccountPersona {
+  account_id: string;
+  content: string;
+  schema_version: number;
+  hash: string;
+  updated_at: number;
+  created_at: number;
+}
+
+export const PERSONA_CONTENT_MAX_LENGTH = 20000;

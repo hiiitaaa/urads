@@ -837,7 +837,8 @@ pnpm --filter @urads/electron build        # Electronアプリビルド
 pnpm --filter @urads/worker deploy         # Workers デプロイ
 
 # DB マイグレーション
-pnpm --filter @urads/worker db:migrate
+pnpm --filter @urads/worker db:migrate          # ローカル D1（開発用）
+pnpm --filter @urads/worker db:migrate:remote   # 本番 D1
 
 # テスト
 pnpm test                                   # 全パッケージ
@@ -871,7 +872,7 @@ VITE_API_BASE_URL=https://urads-api.xxx.workers.dev
 ```
 1. バージョン更新:  pnpm --filter @urads/electron version patch/minor/major
 2. Workers デプロイ: pnpm --filter @urads/worker deploy
-3. D1 マイグレーション: pnpm --filter @urads/worker db:migrate
+3. D1 マイグレーション: pnpm --filter @urads/worker db:migrate:remote
 4. Electron ビルド: pnpm --filter @urads/electron build
 5. R2 アップロード: pnpm --filter @urads/electron release
 6. Discord 通知: 「v1.x.x リリースしました」

@@ -5,34 +5,35 @@ interface Props {
 }
 
 export function SetupWizard({ onComplete }: Props): React.JSX.Element {
-  const [step, setStep] = useState<1 | 2>(1);
-  const [url, setUrl] = useState('');
-  const [testing, setTesting] = useState(false);
+  const [serverUrl, setServerUrl] = useState('');
+  const [serverReady, setServerReady] = useState(false);
+  const [serverTesting, setServerTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+
   const [authStatus, setAuthStatus] = useState('');
   const [authDone, setAuthDone] = useState(false);
 
-  const handleTest = async () => {
-    const isLocalhost = url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1');
-    if (!url.startsWith('https://') && !isLocalhost) {
-      setTestResult({ ok: false, error: 'URLは https:// で始まる必要があります（localhost は http 可）' });
+  const handleTestConnection = async () => {
+    const normalized = serverUrl.replace(/\/+$/, '');
+    try {
+      new URL(normalized);
+    } catch {
+      setTestResult({ ok: false, error: '有効なURLを入力してください' });
       return;
     }
-    // 末尾スラッシュ除去
-    const normalizedUrl = url.replace(/\/+$/, '');
-    setTesting(true);
+    setServerTesting(true);
     setTestResult(null);
     try {
-      const result = await (window as any).urads.configTestConnection(normalizedUrl);
+      const result = await (window as any).urads.configTestConnection(normalized);
       setTestResult(result);
       if (result.ok) {
-        await (window as any).urads.configSetApiBase(normalizedUrl);
-        setUrl(normalizedUrl);
+        await (window as any).urads.configSetApiBase(normalized);
+        setServerReady(true);
       }
     } catch {
       setTestResult({ ok: false, error: '接続テストに失敗しました' });
     } finally {
-      setTesting(false);
+      setServerTesting(false);
     }
   };
 
@@ -62,72 +63,62 @@ export function SetupWizard({ onComplete }: Props): React.JSX.Element {
         width: 480, boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
       }}>
         <h1 style={{ fontSize: 24, marginBottom: 8, color: '#1a1a2e' }}>Urads セットアップ</h1>
-        <div style={{ fontSize: 13, color: '#999', marginBottom: 24 }}>
-          ステップ {step} / 2
-        </div>
 
-        {step === 1 && (
+        {/* ステップ1: サーバーURL入力 */}
+        {!serverReady ? (
           <>
-            <h2 style={{ fontSize: 16, marginBottom: 12 }}>サーバー接続</h2>
-            <p style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>
-              Cloudflare Workers の URL を入力してください。
-              セットアップスクリプト実行時に表示された URL です。
-            </p>
+            <div style={{ fontSize: 13, color: '#999', marginBottom: 20 }}>
+              Cloudflare Worker の URL を入力してください
+            </div>
 
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => { setUrl(e.target.value); setTestResult(null); }}
-              placeholder="https://urads-api.xxxxx.workers.dev"
-              style={{
-                width: '100%', padding: '10px 12px', borderRadius: 6,
-                border: '1px solid #ddd', fontSize: 14, marginBottom: 12,
-                boxSizing: 'border-box',
-              }}
-            />
-
-            <button
-              onClick={handleTest}
-              disabled={testing || !url}
-              style={{
-                padding: '8px 20px', borderRadius: 6, border: '1px solid #ddd',
-                background: testing ? '#f0f0f0' : '#fff', cursor: testing ? 'default' : 'pointer',
-                fontSize: 13, marginBottom: 12,
-              }}
-            >
-              {testing ? 'テスト中...' : '接続テスト'}
-            </button>
-
-            {testResult && (
-              <div style={{
-                padding: '8px 12px', borderRadius: 6, fontSize: 13, marginBottom: 16,
-                background: testResult.ok ? '#f0f8f0' : '#fff3f3',
-                color: testResult.ok ? '#27ae60' : '#e74c3c',
-                border: `1px solid ${testResult.ok ? '#c3e6cb' : '#f5c6cb'}`,
-              }}>
-                {testResult.ok ? '接続OK' : testResult.error}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <div style={{ marginBottom: 16 }}>
+              <input
+                type="url"
+                value={serverUrl}
+                onChange={(e) => { setServerUrl(e.target.value); setTestResult(null); }}
+                placeholder="https://your-worker.your-subdomain.workers.dev"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }}
+              />
               <button
-                onClick={() => setStep(2)}
-                disabled={!testResult?.ok}
+                onClick={handleTestConnection}
+                disabled={serverTesting || !serverUrl}
                 style={{
-                  padding: '10px 24px', borderRadius: 8, border: 'none',
-                  background: testResult?.ok ? '#1a1a2e' : '#ccc',
-                  color: '#fff', cursor: testResult?.ok ? 'pointer' : 'default',
-                  fontSize: 14,
+                  padding: '8px 16px', borderRadius: 6, border: 'none',
+                  background: serverTesting || !serverUrl ? '#ccc' : '#1a1a2e',
+                  color: '#fff', cursor: serverTesting ? 'default' : 'pointer', fontSize: 13,
                 }}
               >
-                次へ
+                {serverTesting ? 'テスト中...' : '接続テスト'}
               </button>
+              {testResult && (
+                <div style={{
+                  marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 12,
+                  background: testResult.ok ? '#f0f8f0' : '#fff3f3',
+                  color: testResult.ok ? '#27ae60' : '#e74c3c',
+                }}>
+                  {testResult.ok ? '接続OK' : testResult.error}
+                </div>
+              )}
             </div>
-          </>
-        )}
 
-        {step === 2 && (
+            <p style={{ fontSize: 12, color: '#bbb', lineHeight: 1.5 }}>
+              まだサーバーがない場合は、セットアップガイドを参照してください。
+            </p>
+          </>
+        ) : (
           <>
+            {/* ステップ2: Threads認証 */}
+            <div style={{ fontSize: 13, color: '#999', marginBottom: 24 }}>
+              Threads アカウントを連携して始めましょう
+            </div>
+
+            <div style={{
+              padding: '8px 12px', borderRadius: 6, background: '#f0f8f0',
+              color: '#27ae60', fontSize: 12, marginBottom: 16,
+            }}>
+              サーバー接続OK
+            </div>
+
             <h2 style={{ fontSize: 16, marginBottom: 12 }}>Threads アカウント連携</h2>
             <p style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>
               Threads アカウントを連携すると、投稿や分析が使えるようになります。

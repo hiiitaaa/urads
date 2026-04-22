@@ -4,5 +4,6 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["modules/**/*", "infrastructure/**/*", "index.ts"]
+  "include": ["modules/**/*", "infrastructure/**/*", "index.ts"],
+  "exclude": ["**/*.test.ts", "dist"]
 }

@@ -3,10 +3,12 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --filter @urads/electron dev",
+    "dev:web": "pnpm --filter @urads/web dev",
     "dev:worker": "docker compose up",
     "dev:all": "concurrently \"pnpm dev:worker\" \"sleep 5 && pnpm dev\"",
     "build": "pnpm --filter @urads/shared build && pnpm --filter @urads/electron build",
     "db:migrate": "pnpm --filter @urads/worker db:migrate",
+    "db:migrate:remote": "pnpm --filter @urads/worker db:migrate:remote",
     "setup": "bash scripts/setup.sh",
     "setup:win": "scripts\\setup.bat"
   },

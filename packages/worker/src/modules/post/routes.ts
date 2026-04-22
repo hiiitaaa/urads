@@ -120,6 +120,73 @@ postRoutes.post('/', async (c) => {
   return c.json({ id, status: 'scheduled', scheduled_at: scheduledAt }, 201);
 });
 
+// POST /posts/rewrite-draft — バズリライト由来の下書き保存（冪等）
+postRoutes.post('/rewrite-draft', async (c) => {
+  const body = await c.req.json<{
+    account_id?: unknown;
+    content?: unknown;
+    source_scraped_post_id?: unknown;
+    persona_hash?: unknown;
+    rewrite_metadata?: unknown;
+  }>();
+
+  if (typeof body.account_id !== 'string' || !body.account_id) {
+    return c.json({ code: 'INVALID', message: 'account_id 必須' }, 400);
+  }
+  if (typeof body.content !== 'string' || !body.content.trim()) {
+    return c.json({ code: 'INVALID', message: 'content 必須' }, 400);
+  }
+  if (body.content.length > 500) {
+    return c.json({ code: 'TOO_LONG', message: 'content は 500 字以内（Threads 制限）' }, 400);
+  }
+  if (typeof body.source_scraped_post_id !== 'string' || !body.source_scraped_post_id) {
+    return c.json({ code: 'INVALID', message: 'source_scraped_post_id 必須' }, 400);
+  }
+  if (typeof body.persona_hash !== 'string' || !body.persona_hash) {
+    return c.json({ code: 'INVALID', message: 'persona_hash 必須' }, 400);
+  }
+  if (typeof body.rewrite_metadata !== 'object' || body.rewrite_metadata === null) {
+    return c.json({ code: 'INVALID', message: 'rewrite_metadata は object 必須' }, 400);
+  }
+
+  const licenseId = (c.get('licenseId' as never) as string) || 'dev-license';
+  const ownership = await assertAccountOwnership(c.env.DB, body.account_id, licenseId);
+  if (!ownership.ok) {
+    return c.json({ code: 'FORBIDDEN', message: ownership.error }, 403);
+  }
+
+  const now = Date.now();
+  const id = crypto.randomUUID();
+  const metadataJson = JSON.stringify(body.rewrite_metadata);
+
+  // ON CONFLICT DO NOTHING で冪等化（エラー文字列に依存しない）
+  // 部分 UNIQUE の target を書かない形（WHERE がある場合 SQLite は conflict arbiter を自動推論）
+  const result = await c.env.DB.prepare(
+    `INSERT INTO posts (id, account_id, content, status, source_scraped_post_id, persona_hash, rewrite_metadata, created_at, updated_at)
+     VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)
+     ON CONFLICT DO NOTHING`
+  ).bind(
+    id, body.account_id, body.content,
+    body.source_scraped_post_id, body.persona_hash, metadataJson,
+    now, now,
+  ).run();
+
+  // meta.changes===1 なら新規挿入、0 なら conflict で既存あり
+  const inserted = (result.meta as { changes?: number } | undefined)?.changes === 1;
+  if (inserted) {
+    return c.json({ id, created: true }, 201);
+  }
+
+  // 既存下書きの id を返して冪等性を担保
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM posts WHERE source_scraped_post_id = ? AND persona_hash = ?'
+  ).bind(body.source_scraped_post_id, body.persona_hash).first<{ id: string }>();
+  if (existing) {
+    return c.json({ id: existing.id, created: false });
+  }
+  return c.json({ code: 'DB_ERROR', message: 'INSERT skipped but no existing row' }, 500);
+});
+
 // GET /posts/quota — 現在のクォータ状況を返す
 postRoutes.get('/quota', async (c) => {
   const accountId = c.req.query('account_id');
@@ -234,6 +301,40 @@ postRoutes.get('/:id', async (c) => {
 
   if (!post) return c.json({ code: 'NOT_FOUND', message: '投稿が見つかりません' }, 404);
   return c.json(post);
+});
+
+// PATCH /posts/:id — 下書きの content 更新（draft のみ）
+postRoutes.patch('/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ content?: unknown }>();
+
+  if (typeof body.content !== 'string' || !body.content.trim()) {
+    return c.json({ code: 'INVALID', message: 'content 必須' }, 400);
+  }
+  if (body.content.length > 500) {
+    return c.json({ code: 'TOO_LONG', message: 'content は 500 字以内（Threads 制限）' }, 400);
+  }
+
+  const row = await c.env.DB.prepare(
+    "SELECT account_id, status FROM posts WHERE id = ?"
+  ).bind(id).first<{ account_id: string; status: string }>();
+
+  if (!row) return c.json({ code: 'NOT_FOUND', message: '投稿が見つかりません' }, 404);
+  if (row.status !== 'draft') {
+    return c.json({ code: 'INVALID_STATE', message: 'draft 状態の投稿のみ編集できます' }, 409);
+  }
+
+  const licenseId = (c.get('licenseId' as never) as string) || 'dev-license';
+  const ownership = await assertAccountOwnership(c.env.DB, row.account_id, licenseId);
+  if (!ownership.ok) {
+    return c.json({ code: 'FORBIDDEN', message: ownership.error }, 403);
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE posts SET content = ?, updated_at = ? WHERE id = ?'
+  ).bind(body.content, Date.now(), id).run();
+
+  return c.json({ id, updated: true });
 });
 
 // DELETE /posts/:id — 投稿削除（draft/scheduled/failed）+ R2メディア削除

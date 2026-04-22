@@ -2,6 +2,7 @@ node_modules/
 dist/
 .wrangler/
 *.tsbuildinfo
+.claude/
 .DS_Store
 Thumbs.db
 .env

@@ -1,10 +1,23 @@
 import { Hono } from 'hono';
 import type { Env } from '../../env.js';
+import { hashContent } from './hash.js';
+import { PERSONA_CONTENT_MAX_LENGTH } from '@urads/shared';
 
 export const accountRoutes = new Hono<{ Bindings: Env }>();
 
 // 開発用: ライセンス認証スキップ。配布時に middleware で差し替え
 const DEV_LICENSE_ID = 'dev-license';
+
+async function ensureAccountOwned(
+  db: D1Database,
+  accountId: string,
+  licenseId: string,
+): Promise<boolean> {
+  const row = await db.prepare(
+    'SELECT id FROM accounts WHERE id = ? AND license_id = ?'
+  ).bind(accountId, licenseId).first();
+  return row !== null;
+}
 
 // GET /accounts — アカウント一覧
 accountRoutes.get('/', async (c) => {
@@ -86,8 +99,70 @@ accountRoutes.delete('/:id', async (c) => {
     c.env.DB.prepare('DELETE FROM reply_rules WHERE account_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM posts WHERE account_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM account_states WHERE account_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM account_persona WHERE account_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM accounts WHERE id = ?').bind(id),
   ]);
 
   return c.json({ deleted: true });
+});
+
+// GET /accounts/:id/persona — 世界観取得
+accountRoutes.get('/:id/persona', async (c) => {
+  const id = c.req.param('id');
+  const licenseId = c.req.header('X-License-Id') || DEV_LICENSE_ID;
+
+  if (!(await ensureAccountOwned(c.env.DB, id, licenseId))) {
+    return c.json({ code: 'NOT_FOUND', message: 'アカウントが見つかりません' }, 404);
+  }
+
+  const row = await c.env.DB.prepare(
+    'SELECT content, schema_version, hash, updated_at, created_at FROM account_persona WHERE account_id = ?'
+  ).bind(id).first<{ content: string; schema_version: number; hash: string; updated_at: number; created_at: number }>();
+
+  if (!row) {
+    return c.json({ code: 'NOT_SET', message: '世界観が未設定です' }, 404);
+  }
+
+  return c.json({
+    account_id: id,
+    content: row.content,
+    schema_version: row.schema_version,
+    hash: row.hash,
+    updated_at: row.updated_at,
+    created_at: row.created_at,
+  });
+});
+
+// PUT /accounts/:id/persona — 世界観 upsert
+accountRoutes.put('/:id/persona', async (c) => {
+  const id = c.req.param('id');
+  const licenseId = c.req.header('X-License-Id') || DEV_LICENSE_ID;
+
+  if (!(await ensureAccountOwned(c.env.DB, id, licenseId))) {
+    return c.json({ code: 'NOT_FOUND', message: 'アカウントが見つかりません' }, 404);
+  }
+
+  const body = await c.req.json<{ content?: unknown }>();
+  if (typeof body.content !== 'string' || body.content.length === 0) {
+    return c.json({ code: 'INVALID', message: 'content は必須です' }, 400);
+  }
+  if (body.content.length > PERSONA_CONTENT_MAX_LENGTH) {
+    return c.json({ code: 'TOO_LARGE', message: `content は ${PERSONA_CONTENT_MAX_LENGTH} 字以内にしてください` }, 400);
+  }
+
+  const hash = await hashContent(body.content);
+  const now = Date.now();
+  const schemaVersion = 1;
+
+  await c.env.DB.prepare(
+    `INSERT INTO account_persona (account_id, content, schema_version, hash, updated_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(account_id) DO UPDATE SET
+       content = excluded.content,
+       schema_version = excluded.schema_version,
+       hash = excluded.hash,
+       updated_at = excluded.updated_at`
+  ).bind(id, body.content, schemaVersion, hash, now, now).run();
+
+  return c.json({ hash, updated_at: now, schema_version: schemaVersion });
 });
